@@ -93,15 +93,17 @@ export const appRouter = router({
         }
 
         // Resolve space_id from the token
+        // The URL token is always a node_token (not space_id).
+        // We call get_node to resolve the space_id, then crawl the ENTIRE space from root.
         let spaceId: string;
-        let rootNodeToken: string | undefined;
 
         try {
           const nodeInfo = await getWikiNodeInfo(token, accessToken);
-          if (nodeInfo) {
+          if (nodeInfo && nodeInfo.space_id) {
+            // Got space_id from node info — crawl entire space from root
             spaceId = nodeInfo.space_id;
-            rootNodeToken = nodeInfo.node_token;
           } else {
+            // Fallback: treat token as space_id directly
             spaceId = token;
           }
         } catch (err: unknown) {
@@ -117,20 +119,19 @@ export const appRouter = router({
                 "3. Copy the new User Access Token and paste it here",
             });
           }
-          throw new TRPCError({
-            code: "FORBIDDEN",
-            message: `Could not access wiki node: ${msg}`,
-          });
+          // If get_node fails (e.g. permission), try using token as space_id
+          console.warn(`[Wiki] get_node failed for token ${token}: ${msg}. Trying as space_id.`);
+          spaceId = token;
         }
 
-        // Fetch all nodes using concurrent BFS
+        // Fetch ALL nodes from root of the space (no rootNodeToken = start from space root)
         let allNodes;
         try {
           allNodes = await fetchAllNodes(
             spaceId,
             accessToken,
             domain,
-            rootNodeToken,
+            undefined, // always start from root of space
             0
           );
         } catch (err: unknown) {

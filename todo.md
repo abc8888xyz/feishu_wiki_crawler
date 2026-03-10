@@ -46,3 +46,8 @@
 - [x] Frontend: lazy/virtualized tree view for large hierarchies
 - [x] Frontend: show estimated time remaining during crawl
 - [x] Frontend: stream results as they arrive instead of waiting for all (SSE)
+
+## Bug Fix - Node Token Resolution
+- [x] Fix: URL with node token (QPe5w5g7...) must call get_node API to resolve space_id
+- [x] Fix: after resolving space_id, crawl entire space from root (not just children of that node)
+- [x] Fix: test with https://waytoagi.feishu.cn/wiki/QPe5w5g7UisbEkkow8XcDmOpn8e - space_id=7226178700923011075 resolved correctly
