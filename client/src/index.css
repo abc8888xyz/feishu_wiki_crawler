@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
@@ -119,6 +120,7 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
