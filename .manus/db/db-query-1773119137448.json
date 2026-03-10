@@ -1,0 +1,17 @@
+{
+  "query": "SELECT id, status, totalNodes, pendingQueue, skippedNodes FROM crawl_sessions ORDER BY id DESC LIMIT 3;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3WWrCSHiXbn6r7Y.root --database KoQWJtabBeGaDvMYn6Ybee --execute SELECT id, status, totalNodes, pendingQueue, skippedNodes FROM crawl_sessions ORDER BY id DESC LIMIT 3;",
+  "rows": [
+    {
+      "id": "1",
+      "status": "running",
+      "totalNodes": "11547",
+      "pendingQueue": "24",
+      "skippedNodes": "0"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tstatus\ttotalNodes\tpendingQueue\tskippedNodes\n1\trunning\t11547\t24\t0\n",
+  "stderr": "",
+  "execution_time_ms": 475
+}

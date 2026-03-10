@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   Link2,
   Download,
@@ -18,6 +18,11 @@ import {
   ChevronUp,
   Zap,
   AlertTriangle,
+  PlayCircle,
+  PauseCircle,
+  Database,
+  Scissors,
+  Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -115,7 +120,7 @@ function CredentialsGuide() {
               <li>Click <strong className="text-foreground">Get Token</strong> → choose <strong className="text-foreground">user_access_token</strong></li>
               <li>Authorize and copy the token shown</li>
             </ol>
-            <p className="text-amber-600 dark:text-amber-400 mt-1.5">⚠ User tokens expire after 2 hours. Get a new one if you see a token expired error.</p>
+            <p className="text-amber-600 dark:text-amber-400 mt-1.5">⚠ User tokens expire after 2 hours. If the crawl pauses mid-way, get a new token and click <strong>Resume</strong>.</p>
           </div>
         </div>
       )}
@@ -124,7 +129,7 @@ function CredentialsGuide() {
 }
 
 // ─── Progress Display ─────────────────────────────────────────────────────────
-function CrawlProgress({ count, message, startTime }: { count: number; message: string; startTime: number }) {
+function CrawlProgressDisplay({ count, pending, message, startTime }: { count: number; pending: number; message: string; startTime: number }) {
   const elapsed = Math.floor((Date.now() - startTime) / 1000);
   const rate = elapsed > 0 ? Math.round(count / elapsed) : 0;
 
@@ -144,7 +149,11 @@ function CrawlProgress({ count, message, startTime }: { count: number; message: 
           <div className="w-full max-w-md space-y-2">
             <div className="flex justify-between text-xs text-muted-foreground">
               <span className="font-medium text-foreground">{count.toLocaleString()} nodes found</span>
-              <span className="flex items-center gap-1"><Zap className="w-3 h-3 text-yellow-500" />Concurrent BFS</span>
+              <span className="flex items-center gap-1">
+                {pending > 0 && <span className="text-amber-600">{pending.toLocaleString()} pending</span>}
+                {pending > 0 && <span>·</span>}
+                <Zap className="w-3 h-3 text-yellow-500" />Persistent BFS
+              </span>
             </div>
             <Progress value={Math.min((count / 200) % 100, 99)} className="h-1.5" />
           </div>
@@ -154,32 +163,79 @@ function CrawlProgress({ count, message, startTime }: { count: number; message: 
   );
 }
 
+// ─── Paused State Display ─────────────────────────────────────────────────────
+function PausedDisplay({
+  sessionId,
+  totalCount,
+  pending,
+  message,
+  onResume,
+}: {
+  sessionId: number;
+  totalCount: number;
+  pending: number;
+  message: string;
+  onResume: () => void;
+}) {
+  return (
+    <Card className="shadow-sm border-amber-200 bg-amber-50/40 dark:bg-amber-900/10">
+      <CardContent className="py-6 flex flex-col items-center gap-4 text-center">
+        <PauseCircle className="w-10 h-10 text-amber-500" />
+        <div>
+          <p className="text-sm font-semibold text-foreground">Crawl Paused</p>
+          <p className="text-xs text-muted-foreground mt-1 max-w-sm">{message}</p>
+        </div>
+        <div className="flex items-center gap-3 text-xs">
+          <span className="flex items-center gap-1.5 bg-background rounded-md px-3 py-1.5 border">
+            <Database className="w-3.5 h-3.5 text-primary" />
+            <strong>{totalCount.toLocaleString()}</strong> nodes saved
+          </span>
+          <span className="flex items-center gap-1.5 bg-background rounded-md px-3 py-1.5 border border-amber-200">
+            <Loader2 className="w-3.5 h-3.5 text-amber-500" />
+            <strong>{pending.toLocaleString()}</strong> pending
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground">Session ID: <code className="font-mono bg-muted px-1 rounded">{sessionId}</code></p>
+        <Button onClick={onResume} className="gap-2">
+          <PlayCircle className="w-4 h-4" />
+          Resume with new token
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── SSE Crawl Hook ───────────────────────────────────────────────────────────
 interface CrawlResult {
+  sessionId?: number;
   spaceId: string;
   domain: string;
   totalCount: number;
+  skipped: number;
   nodes: WikiNode[];
   tree: WikiNode[];
   treeAvailable: boolean;
 }
 
+interface PausedState {
+  sessionId: number;
+  totalCount: number;
+  pending: number;
+  message: string;
+}
+
 function useSseCrawl() {
   const [isLoading, setIsLoading] = useState(false);
   const [progressCount, setProgressCount] = useState(0);
+  const [progressPending, setProgressPending] = useState(0);
   const [progressMessage, setProgressMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CrawlResult | null>(null);
+  const [paused, setPaused] = useState<PausedState | null>(null);
   const [startTime, setStartTime] = useState(0);
   const esRef = useRef<EventSource | null>(null);
 
-  const crawl = useCallback((params: {
-    url: string;
-    appId?: string;
-    appSecret?: string;
-    userAccessToken?: string;
-  }) => {
-    // Abort previous
+  const openSSE = useCallback((url: string) => {
     if (esRef.current) {
       esRef.current.close();
       esRef.current = null;
@@ -188,33 +244,44 @@ function useSseCrawl() {
     setIsLoading(true);
     setError(null);
     setResult(null);
+    setPaused(null);
     setProgressCount(0);
+    setProgressPending(0);
     setProgressMessage("Connecting...");
     setStartTime(Date.now());
 
-    const qs = new URLSearchParams();
-    qs.set("url", params.url);
-    if (params.userAccessToken) qs.set("userAccessToken", params.userAccessToken);
-    if (params.appId) qs.set("appId", params.appId);
-    if (params.appSecret) qs.set("appSecret", params.appSecret);
-
-    const es = new EventSource(`/api/wiki/crawl-stream?${qs.toString()}`);
+    const es = new EventSource(url);
     esRef.current = es;
 
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.type === "progress") {
+        if (data.type === "session") {
+          // Session created — nothing to do in UI yet
+        } else if (data.type === "progress") {
           setProgressCount(data.count ?? 0);
+          setProgressPending(data.pending ?? 0);
           setProgressMessage(data.message ?? "");
         } else if (data.type === "done") {
           setResult({
+            sessionId: data.sessionId,
             spaceId: data.spaceId,
             domain: data.domain,
             totalCount: data.totalCount,
+            skipped: data.skipped ?? 0,
             nodes: data.nodes as WikiNode[],
             tree: data.tree as WikiNode[],
             treeAvailable: data.treeAvailable ?? true,
+          });
+          setIsLoading(false);
+          es.close();
+          esRef.current = null;
+        } else if (data.type === "paused") {
+          setPaused({
+            sessionId: data.sessionId,
+            totalCount: data.totalCount ?? 0,
+            pending: data.pending ?? 0,
+            message: data.message ?? "Token expired mid-crawl.",
           });
           setIsLoading(false);
           es.close();
@@ -240,6 +307,36 @@ function useSseCrawl() {
     };
   }, []);
 
+  const crawl = useCallback((params: {
+    url: string;
+    appId?: string;
+    appSecret?: string;
+    userAccessToken?: string;
+    crawlMode?: "space" | "subtree";
+  }) => {
+    const qs = new URLSearchParams();
+    qs.set("url", params.url);
+    if (params.userAccessToken) qs.set("userAccessToken", params.userAccessToken);
+    if (params.appId) qs.set("appId", params.appId);
+    if (params.appSecret) qs.set("appSecret", params.appSecret);
+    if (params.crawlMode) qs.set("crawlMode", params.crawlMode);
+    openSSE(`/api/wiki/crawl-stream?${qs.toString()}`);
+  }, [openSSE]);
+
+  const resume = useCallback((params: {
+    sessionId: number;
+    appId?: string;
+    appSecret?: string;
+    userAccessToken?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    qs.set("sessionId", String(params.sessionId));
+    if (params.userAccessToken) qs.set("userAccessToken", params.userAccessToken);
+    if (params.appId) qs.set("appId", params.appId);
+    if (params.appSecret) qs.set("appSecret", params.appSecret);
+    openSSE(`/api/wiki/crawl-resume?${qs.toString()}`);
+  }, [openSSE]);
+
   const abort = useCallback(() => {
     if (esRef.current) {
       esRef.current.close();
@@ -251,7 +348,7 @@ function useSseCrawl() {
   // Cleanup on unmount
   useEffect(() => () => { esRef.current?.close(); }, []);
 
-  return { crawl, abort, isLoading, progressCount, progressMessage, error, result, startTime };
+  return { crawl, resume, abort, isLoading, progressCount, progressPending, progressMessage, error, result, paused, startTime };
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
@@ -262,10 +359,20 @@ export default function Home() {
   const [userToken, setUserToken] = useState("");
   const [showSecret, setShowSecret] = useState(false);
   const [authMode, setAuthMode] = useState<"app" | "token">("app");
+  const [crawlMode, setCrawlMode] = useState<"space" | "subtree">("space");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("tree");
 
-  const { crawl, abort, isLoading, progressCount, progressMessage, error, result, startTime } = useSseCrawl();
+  // Parse node token from URL for display
+  const parsedUrlToken = useMemo(() => {
+    try {
+      const u = new URL(wikiUrl.trim());
+      const m = u.pathname.match(/\/wiki\/([A-Za-z0-9_-]+)/);
+      return m ? m[1] : null;
+    } catch { return null; }
+  }, [wikiUrl]);
+
+  const { crawl, resume, abort, isLoading, progressCount, progressPending, progressMessage, error, result, paused, startTime } = useSseCrawl();
   const testAuthMutation = trpc.wiki.testAuth.useMutation();
 
   const handleCrawl = useCallback(() => {
@@ -275,8 +382,19 @@ export default function Home() {
       appId: authMode === "app" ? appId.trim() || undefined : undefined,
       appSecret: authMode === "app" ? appSecret.trim() || undefined : undefined,
       userAccessToken: authMode === "token" ? userToken.trim() || undefined : undefined,
+      crawlMode,
     });
-  }, [wikiUrl, appId, appSecret, userToken, authMode, crawl]);
+  }, [wikiUrl, appId, appSecret, userToken, authMode, crawlMode, crawl]);
+
+  const handleResume = useCallback(() => {
+    if (!paused) return;
+    resume({
+      sessionId: paused.sessionId,
+      appId: authMode === "app" ? appId.trim() || undefined : undefined,
+      appSecret: authMode === "app" ? appSecret.trim() || undefined : undefined,
+      userAccessToken: authMode === "token" ? userToken.trim() || undefined : undefined,
+    });
+  }, [paused, appId, appSecret, userToken, authMode, resume]);
 
   const handleExportCsv = useCallback(() => {
     if (!result?.nodes.length) return;
@@ -413,6 +531,41 @@ export default function Home() {
               )}
             </div>
 
+            {/* Crawl Mode Toggle */}
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-1.5">
+                <Globe className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">Crawl Scope</span>
+              </div>
+              <div className="flex gap-1 p-1 bg-muted rounded-md w-fit">
+                <button
+                  className={cn("px-3 py-1 text-xs rounded font-medium transition-colors flex items-center gap-1.5", crawlMode === "space" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                  onClick={() => setCrawlMode("space")}
+                >
+                  <Globe className="w-3 h-3" />
+                  Entire Space
+                </button>
+                <button
+                  className={cn("px-3 py-1 text-xs rounded font-medium transition-colors flex items-center gap-1.5", crawlMode === "subtree" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                  onClick={() => setCrawlMode("subtree")}
+                >
+                  <Scissors className="w-3 h-3" />
+                  This Node Only
+                </button>
+              </div>
+              {crawlMode === "space" ? (
+                <p className="text-xs text-muted-foreground">Crawl the entire wiki space — all pages, all sections.</p>
+              ) : parsedUrlToken ? (
+                <p className="text-xs text-muted-foreground">
+                  Only crawl children of node{" "}
+                  <code className="font-mono bg-muted px-1 py-0.5 rounded text-[10px]">{parsedUrlToken}</code>
+                  {" "}and its descendants.
+                </p>
+              ) : (
+                <p className="text-xs text-amber-600">⚠ Enter a URL with a specific node token to use this mode.</p>
+              )}
+            </div>
+
             {/* Credentials guide */}
             <CredentialsGuide />
           </CardContent>
@@ -428,7 +581,18 @@ export default function Home() {
 
         {/* Loading with real-time progress */}
         {isLoading && (
-          <CrawlProgress count={progressCount} message={progressMessage} startTime={startTime} />
+          <CrawlProgressDisplay count={progressCount} pending={progressPending} message={progressMessage} startTime={startTime} />
+        )}
+
+        {/* Paused state — token expired mid-crawl */}
+        {paused && !isLoading && (
+          <PausedDisplay
+            sessionId={paused.sessionId}
+            totalCount={paused.totalCount}
+            pending={paused.pending}
+            message={paused.message}
+            onResume={handleResume}
+          />
         )}
 
         {/* Results */}
@@ -440,6 +604,15 @@ export default function Home() {
                   <CheckCircle2 className="w-4 h-4 text-green-500" />
                   <span className="text-sm font-semibold">{result.nodes.length.toLocaleString()} pages found</span>
                 </div>
+                {result.skipped > 0 && (
+                  <>
+                    <Separator orientation="vertical" className="h-4" />
+                    <span className="text-xs text-amber-600 flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      {result.skipped} permanently failed
+                    </span>
+                  </>
+                )}
                 <Separator orientation="vertical" className="h-4" />
                 <span className="text-xs text-muted-foreground font-mono">{result.domain}</span>
                 <Separator orientation="vertical" className="h-4" />
@@ -517,7 +690,7 @@ export default function Home() {
         )}
 
         {/* Empty state */}
-        {!hasResults && !isLoading && !error && (
+        {!hasResults && !isLoading && !error && !paused && (
           <Card className="shadow-sm border-dashed">
             <CardContent className="py-14 flex flex-col items-center gap-4 text-center">
               <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
@@ -537,7 +710,7 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground bg-green-50 dark:bg-green-900/10 rounded-lg px-4 py-2.5 border border-green-200 dark:border-green-800">
                 <Zap className="w-3.5 h-3.5 text-green-600 shrink-0" />
-                <span><strong className="text-green-700 dark:text-green-400">Optimized for large wikis:</strong> Concurrent BFS fetching handles 10,000+ nodes efficiently</span>
+                <span><strong className="text-green-700 dark:text-green-400">Zero node loss:</strong> Persistent queue in DB — resume if token expires mid-crawl</span>
               </div>
             </CardContent>
           </Card>

@@ -1,0 +1,20 @@
+{
+  "query": "SELECT id, spaceId, status, totalNodes, pendingQueue, skippedNodes, errorMsg, createdAt FROM crawl_sessions ORDER BY id DESC LIMIT 5;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 3WWrCSHiXbn6r7Y.root --database KoQWJtabBeGaDvMYn6Ybee --execute SELECT id, spaceId, status, totalNodes, pendingQueue, skippedNodes, errorMsg, createdAt FROM crawl_sessions ORDER BY id DESC LIMIT 5;",
+  "rows": [
+    {
+      "id": "1",
+      "spaceId": "7226178700923011075",
+      "status": "running",
+      "totalNodes": "9445",
+      "pendingQueue": "233",
+      "skippedNodes": "0",
+      "errorMsg": "NULL",
+      "createdAt": "2026-03-10 05:00:03"
+    }
+  ],
+  "messages": [],
+  "stdout": "id\tspaceId\tstatus\ttotalNodes\tpendingQueue\tskippedNodes\terrorMsg\tcreatedAt\n1\t7226178700923011075\trunning\t9445\t233\t0\tNULL\t2026-03-10 05:00:03\n",
+  "stderr": "",
+  "execution_time_ms": 920
+}

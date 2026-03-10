@@ -66,3 +66,23 @@
 - [x] Fix: page_size giữ nguyên 50 (Feishu API max là 50, không phải 100)
 - [x] Test: verify số lượng nodes tăng từ 6,833 lên 9,017 (+32%) sau fix
 - [x] Fix: rate limit (code 99991400) - giảm concurrency xuống 5, tăng maxRetries lên 5, backoff 2s/4s/8s/16s/32s cho rate limit errors
+
+## Cơ chế crawl không bỏ sót (Persistent Queue)
+- [ ] DB schema: bảng crawl_sessions (id, space_id, domain, status, total_nodes, skipped_nodes, created_at, updated_at)
+- [ ] DB schema: bảng crawl_queue (id, session_id, parent_token, fetch_space_id, depth, status: pending/done/failed, retry_count, error_msg)
+- [ ] DB schema: bảng crawl_nodes (id, session_id, node_token, title, url, obj_type, depth, parent_token, raw_json)
+- [ ] Backend: persistent BFS engine - lưu queue vào DB, xử lý từng batch, không bỏ sót khi rate limit
+- [ ] Backend: rate limit handler - khi gặp 99991400, đưa node vào pending queue với delay, không skip
+- [ ] Backend: SSE endpoint stream progress từ DB thay vì in-memory
+- [ ] Backend: resume API - tiếp tục crawl session đang dở với token mới
+- [ ] Frontend: hiển thị "Resume" button khi session bị dừng giữa chừng
+- [ ] Frontend: hiển thị số nodes pending/done/failed trong progress bar
+- [ ] Test: crawl toàn bộ waytoagi wiki và verify 0 nodes bị skip do rate limit
+
+## Tính năng Crawl Subtree (chỉ cào con của node được chọn)
+
+- [x] Backend: wikiCrawlRoute /start nhận thêm param rootNodeToken để seed queue từ node đó thay vì root space
+- [x] Backend: crawlEngine createCrawlSession nhận rootNodeToken, seed queue với parentToken=rootNodeToken
+- [x] UI: thêm toggle "Entire Space / This Node Only" trong form với Crawl Scope section
+- [x] UI: khi chọn "This Node Only", hiển thị node token từ URL
+- [x] UI: label rõ ràng mô tả đang cào gì (toàn space hay chỉ subtree của node X)

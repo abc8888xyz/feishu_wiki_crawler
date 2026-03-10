@@ -148,7 +148,7 @@ export async function getWikiNodeInfo(
 /**
  * Fetch ALL nodes at a given level (with pagination), returns items array
  */
-async function fetchAllAtLevel(
+export async function fetchAllAtLevel(
   spaceId: string,
   accessToken: string,
   parentNodeToken?: string
