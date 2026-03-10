@@ -56,3 +56,13 @@
 - [x] Fix: HTTP 400 Bad Request when fetching wiki nodes - this is expected behavior for shortcut/restricted nodes, already handled by skip-and-continue logic
 - [x] Fix: improve error handling - 400 errors are silently skipped, TOKEN_EXPIRED errors are propagated correctly
 - [x] Fix: search highlight uses trimmedSearch for consistency (no trailing space issues)
+
+## Nâng cấp crawl 11,000+ nodes
+- [x] Điều tra: HTTP 400 xảy ra do token hết hạn (code 99991668) - Feishu trả về HTTP 400 cho cả token errors và node errors
+- [x] Fix: shortcut nodes (node_type="shortcut") phải dùng origin_node_token + origin_space_id để fetch children
+- [x] Fix: cross-space shortcut nodes (origin_space_id khác space_id hiện tại) cần crawl sang space khác
+- [x] Fix: tăng retry logic với exponential backoff (500ms/1s/2s) cho transient errors
+- [x] Fix: tăng concurrency từ 5 lên 10 để crawl nhanh hơn
+- [x] Fix: page_size giữ nguyên 50 (Feishu API max là 50, không phải 100)
+- [x] Test: verify số lượng nodes tăng từ 6,833 lên 9,017 (+32%) sau fix
+- [x] Fix: rate limit (code 99991400) - giảm concurrency xuống 5, tăng maxRetries lên 5, backoff 2s/4s/8s/16s/32s cho rate limit errors

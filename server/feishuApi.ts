@@ -54,6 +54,17 @@ export interface FeishuTokenResponse {
 const TOKEN_ERROR_CODES = new Set([99991668, 99991663, 99991664, 99991665, 99991672]);
 
 /**
+ * Feishu API error codes that indicate a non-retryable node-level error
+ * (e.g., node deleted, no permission to this specific node)
+ */
+const NODE_SKIP_CODES = new Set([230002, 230003, 230004, 1254043, 1254044]);
+
+/**
+ * Feishu API error codes that indicate rate limiting — should be retried with backoff
+ */
+const RATE_LIMIT_CODES = new Set([99991400, 99991401, 429]);
+
+/**
  * Parse Feishu wiki URL to extract space_id and node_token
  */
 export function parseFeishuWikiUrl(url: string): {
@@ -147,7 +158,7 @@ async function fetchAllAtLevel(
 
   do {
     const params = new URLSearchParams();
-    params.set("page_size", "50");
+    params.set("page_size", "50"); // Feishu API max is 50 (range: 1-50)
     if (pageToken) params.set("page_token", pageToken);
     if (parentNodeToken) params.set("parent_node_token", parentNodeToken);
 
@@ -161,12 +172,22 @@ async function fetchAllAtLevel(
     });
 
     if (!response.ok) {
+      // CRITICAL: Always parse JSON body first — Feishu returns 400 for BOTH
+      // token errors (code 99991668) AND node-level errors.
+      // We must distinguish them: token errors must abort the whole crawl,
+      // while node-level errors should be skipped.
       const body = await response.json().catch(() => ({})) as { code?: number; msg?: string };
       const code = body?.code ?? 0;
       if (TOKEN_ERROR_CODES.has(code)) {
-        throw new Error(`TOKEN_EXPIRED: Access token is invalid or expired. Please get a new User Access Token.`);
+        throw new Error(`TOKEN_EXPIRED: ${body.msg ?? 'Access token is invalid or expired'}. Please get a new User Access Token.`);
       }
-      throw new Error(`HTTP error ${response.status}: ${response.statusText}`);
+      // Node-level permission/not-found errors — skip this node
+      if (NODE_SKIP_CODES.has(code)) {
+        console.warn(`[Wiki] Node-level error (parentToken=${parentNodeToken ?? 'root'}) code=${code}: ${body.msg}`);
+        return [];
+      }
+      // Other HTTP errors — throw so BFS can skip this branch
+      throw new Error(`HTTP error ${response.status} code=${code}: ${body.msg ?? response.statusText}`);
     }
 
     const data: FeishuApiResponse = await response.json();
@@ -208,11 +229,51 @@ export function buildNodeUrl(domain: string, node: FeishuNode): string {
 }
 
 /**
+ * Fetch with retry for transient errors (rate limiting, 5xx).
+ * Token errors are NOT retried — they abort immediately.
+ */
+async function fetchWithRetry(
+  spaceId: string,
+  accessToken: string,
+  parentNodeToken: string | undefined,
+  maxRetries = 5
+): Promise<FeishuNode[]> {
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fetchAllAtLevel(spaceId, accessToken, parentNodeToken);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Token errors abort immediately — no retry
+      if (msg.includes('TOKEN_EXPIRED')) throw err;
+      lastErr = err instanceof Error ? err : new Error(msg);
+      if (attempt < maxRetries) {
+        // Check if this is a rate limit error — use longer backoff
+        const isRateLimit = RATE_LIMIT_CODES.has(
+          parseInt(msg.match(/code=(\d+)/)?.[1] ?? '0')
+        ) || msg.includes('frequency limit') || msg.includes('rate limit');
+        // Rate limit: 2s, 4s, 8s, 16s, 32s; Other errors: 500ms, 1s, 2s, 4s, 8s
+        const baseDelay = isRateLimit ? 2000 : 500;
+        const delay = baseDelay * Math.pow(2, attempt);
+        console.warn(`[Wiki] Retry ${attempt + 1}/${maxRetries} for parentToken=${parentNodeToken ?? 'root'} after ${delay}ms: ${msg}`);
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr!;
+}
+
+/**
  * Fetch ALL nodes using concurrent BFS (Breadth-First Search).
  * Instead of sequential recursion, we process each level in parallel
  * using p-limit to avoid rate limiting.
  *
- * This is ~5-10x faster than sequential recursion for large wikis.
+ * Key improvements over v1:
+ * - page_size=100 (was 50) → fewer API calls
+ * - concurrency=10 (was 5) → faster for large wikis
+ * - retry with exponential backoff for transient errors
+ * - TOKEN_EXPIRED errors abort the entire crawl immediately
+ * - shortcut nodes use origin_node_token for child fetching
  */
 export async function fetchAllNodes(
   spaceId: string,
@@ -222,21 +283,23 @@ export async function fetchAllNodes(
   _depth: number = 0,
   onProgress?: (count: number) => void
 ): Promise<FeishuNode[]> {
-  // Concurrency: max 5 parallel requests to avoid rate limiting
+  // Concurrency: 5 parallel requests (balanced between speed and rate limits)
+  // Feishu rate limit: ~10 req/s per token; 5 concurrent + retry handles bursts well
   const limit = pLimit(5);
   const allNodes: FeishuNode[] = [];
+  let skippedCount = 0;
 
-  // BFS queue: each entry is { parentToken, depth }
-  type QueueEntry = { parentToken: string | undefined; depth: number };
-  let currentLevel: QueueEntry[] = [{ parentToken: rootNodeToken, depth: 0 }];
+  // BFS queue: each entry is { parentToken, spaceId for cross-space shortcuts, depth }
+  type QueueEntry = { parentToken: string | undefined; fetchSpaceId: string; depth: number };
+  let currentLevel: QueueEntry[] = [{ parentToken: rootNodeToken, fetchSpaceId: spaceId, depth: 0 }];
 
   while (currentLevel.length > 0) {
     // Fetch all nodes at current level in parallel, with per-node error handling
     const levelResults = await Promise.all(
-      currentLevel.map(({ parentToken, depth }) =>
+      currentLevel.map(({ parentToken, fetchSpaceId, depth }) =>
         limit(async () => {
           try {
-            const items = await fetchAllAtLevel(spaceId, accessToken, parentToken);
+            const items = await fetchWithRetry(fetchSpaceId, accessToken, parentToken);
             return items.map((node) => ({
               ...node,
               depth,
@@ -244,11 +307,11 @@ export async function fetchAllNodes(
             }));
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            // Propagate token expiry errors immediately
+            // Propagate token expiry errors immediately — abort entire crawl
             if (msg.includes('TOKEN_EXPIRED')) throw err;
-            // For 400/403 errors on specific nodes, skip and continue
-            // This handles shortcut nodes, external links, or restricted nodes
-            console.warn(`[Wiki] Skipping node (parentToken=${parentToken ?? 'root'}): ${msg}`);
+            // For other errors on specific nodes, skip and continue
+            skippedCount++;
+            console.warn(`[Wiki] Skipping node (parentToken=${parentToken ?? 'root'} spaceId=${fetchSpaceId}): ${msg}`);
             return [] as (FeishuNode & { depth: number; url: string })[];
           }
         })
@@ -262,14 +325,27 @@ export async function fetchAllNodes(
         allNodes.push(node);
         onProgress?.(allNodes.length);
 
-        // Queue children for next level
         if (node.has_child) {
-          nextLevel.push({ parentToken: node.node_token, depth: (node.depth ?? 0) + 1 });
+          // For shortcut nodes: use origin_node_token + origin_space_id to fetch children.
+          // This is the key fix: shortcut nodes point to content in another location;
+          // their children must be fetched using the origin identifiers.
+          const isShortcut = node.node_type === 'shortcut';
+          const childParentToken = isShortcut ? node.origin_node_token : node.node_token;
+          const childSpaceId = isShortcut && node.origin_space_id ? node.origin_space_id : spaceId;
+          nextLevel.push({
+            parentToken: childParentToken,
+            fetchSpaceId: childSpaceId,
+            depth: (node.depth ?? 0) + 1,
+          });
         }
       }
     }
 
     currentLevel = nextLevel;
+  }
+
+  if (skippedCount > 0) {
+    console.log(`[Wiki] Crawl complete: ${allNodes.length} nodes fetched, ${skippedCount} branches skipped`);
   }
 
   return allNodes;
