@@ -3,6 +3,7 @@ import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
+import { TRPCError } from "@trpc/server";
 import {
   parseFeishuWikiUrl,
   getTenantAccessToken,
@@ -10,7 +11,6 @@ import {
   fetchAllNodes,
   buildTree,
 } from "./feishuApi";
-import { scrapePublicWiki } from "./feishuScraper";
 
 export const appRouter = router({
   system: systemRouter,
@@ -35,9 +35,8 @@ export const appRouter = router({
       }),
 
     /**
-     * Crawl all nodes from a Feishu wiki space.
-     * - With credentials (appId+appSecret or userToken): uses official Feishu API (full data)
-     * - Without credentials: uses Puppeteer browser scraping (public wikis only, partial data)
+     * Crawl all nodes from a Feishu wiki space using the official Feishu API.
+     * Requires either App ID + App Secret or a User Access Token.
      */
     crawl: publicProcedure
       .input(
@@ -51,84 +50,120 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const { url, appId, appSecret, userAccessToken } = input;
 
-        // Parse the URL
+        // Parse the URL first
         const parsed = parseFeishuWikiUrl(url);
         if (!parsed.isValid) {
-          throw new Error(
-            "Invalid Feishu wiki URL. Please enter a valid URL like:\n" +
-            "https://xxx.feishu.cn/wiki/TOKEN"
-          );
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Invalid Feishu wiki URL. Please enter a valid URL like:\n" +
+              "https://xxx.feishu.cn/wiki/TOKEN\n" +
+              "https://xxx.larksuite.com/wiki/TOKEN",
+          });
         }
 
         const { domain, token } = parsed;
 
-        // ── Mode 1: Official API with credentials ──────────────────────────
-        const hasCredentials =
-          (appId && appSecret) || userAccessToken;
+        // Validate credentials are provided
+        const hasAppCreds = appId && appSecret;
+        const hasUserToken = userAccessToken && userAccessToken.trim().length > 0;
 
-        if (hasCredentials) {
-          let accessToken: string;
-          if (userAccessToken) {
-            accessToken = userAccessToken;
+        if (!hasAppCreds && !hasUserToken) {
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message:
+              "Feishu Wiki API requires authentication.\n\n" +
+              "How to get credentials:\n\n" +
+              "Option A — App Credentials (recommended for full access):\n" +
+              "  1. Visit https://open.feishu.cn/app → Create new app\n" +
+              "  2. Permissions & Scopes → enable: wiki:wiki:readonly\n" +
+              "  3. Publish the app version\n" +
+              "  4. Enter App ID + App Secret in the form\n\n" +
+              "Option B — User Access Token (quick test):\n" +
+              "  1. Visit https://open.feishu.cn/api-explorer\n" +
+              "  2. Log in → copy the User Access Token shown\n" +
+              "  3. Paste it in the User Access Token field",
+          });
+        }
+
+        // Get access token
+        let accessToken: string;
+        try {
+          if (hasUserToken) {
+            accessToken = userAccessToken!.trim();
           } else {
             accessToken = await getTenantAccessToken(appId!, appSecret!);
           }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message: `Failed to authenticate with Feishu: ${msg}`,
+          });
+        }
 
-          // Resolve space_id from the token
-          let spaceId: string;
-          let rootNodeToken: string | undefined;
+        // Resolve space_id from the token
+        let spaceId: string;
+        let rootNodeToken: string | undefined;
 
+        try {
           const nodeInfo = await getWikiNodeInfo(token, accessToken);
           if (nodeInfo) {
             spaceId = nodeInfo.space_id;
             rootNodeToken = nodeInfo.node_token;
           } else {
+            // token might already be a space_id
             spaceId = token;
           }
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "FORBIDDEN",
+            message:
+              `Could not access wiki node: ${msg}\n\n` +
+              "Make sure your app has the 'wiki:wiki:readonly' permission and has been added to the wiki space.",
+          });
+        }
 
-          const allNodes = await fetchAllNodes(
+        // Fetch all nodes recursively
+        let allNodes;
+        try {
+          allNodes = await fetchAllNodes(
             spaceId,
             accessToken,
             domain,
             rootNodeToken,
             0
           );
-
-          const tree = buildTree(allNodes);
-
-          return {
-            spaceId,
-            domain,
-            totalCount: allNodes.length,
-            nodes: allNodes,
-            tree,
-            mode: "api" as const,
-          };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Failed to fetch wiki nodes: ${msg}`,
+          });
         }
 
-        // ── Mode 2: Public wiki scraping via Puppeteer ─────────────────────
-        const scrapedNodes = await scrapePublicWiki(url, domain, token);
-
-        if (scrapedNodes.length === 0) {
-          throw new Error(
-            "Could not extract any pages from this wiki.\n\n" +
-            "This may be because:\n" +
-            "• The wiki is private and requires authentication\n" +
-            "• The wiki has no child pages\n" +
-            "• The page took too long to load\n\n" +
-            "For private wikis, please provide App ID + App Secret or a User Access Token."
-          );
+        if (allNodes.length === 0) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message:
+              "No pages found in this wiki space.\n\n" +
+              "This could mean:\n" +
+              "• The wiki space is empty\n" +
+              "• Your app doesn't have permission to view the pages\n" +
+              "• The wiki token in the URL is incorrect",
+          });
         }
 
-        const tree = buildTree(scrapedNodes);
+        const tree = buildTree(allNodes);
 
         return {
-          spaceId: token,
+          spaceId,
           domain,
-          totalCount: scrapedNodes.length,
-          nodes: scrapedNodes,
+          totalCount: allNodes.length,
+          nodes: allNodes,
           tree,
-          mode: "scrape" as const,
+          mode: "api" as const,
         };
       }),
 
@@ -144,8 +179,16 @@ export const appRouter = router({
       )
       .mutation(async ({ input }) => {
         const { appId, appSecret } = input;
-        const token = await getTenantAccessToken(appId, appSecret);
-        return { success: true, tokenPreview: token.substring(0, 20) + "..." };
+        try {
+          const token = await getTenantAccessToken(appId, appSecret);
+          return { success: true, tokenPreview: token.substring(0, 20) + "..." };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new TRPCError({
+            code: "UNAUTHORIZED",
+            message: `Authentication failed: ${msg}`,
+          });
+        }
       }),
   }),
 });

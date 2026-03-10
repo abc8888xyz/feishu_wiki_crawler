@@ -2,8 +2,6 @@ import { useState, useCallback } from "react";
 import {
   Link2,
   Download,
-  ChevronDown,
-  ChevronUp,
   AlertCircle,
   CheckCircle2,
   Loader2,
@@ -15,9 +13,9 @@ import {
   EyeOff,
   RefreshCw,
   Info,
-  Globe,
-  Lock,
-  Zap,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,7 +30,7 @@ import { WikiTreeView, type WikiNode } from "@/components/WikiTreeView";
 import { WikiTable } from "@/components/WikiTable";
 
 // ─── CSV Export ──────────────────────────────────────────────────────────────
-function exportToCsv(nodes: WikiNode[], filename: string = "feishu_wiki_links.csv") {
+function exportToCsv(nodes: WikiNode[], filename = "feishu_wiki_links.csv") {
   const headers = ["Title", "URL", "Type", "Depth", "Node Token", "Obj Token", "Parent Token", "Created", "Updated"];
   const rows = nodes.map(n => [
     `"${(n.title ?? "").replace(/"/g, '""')}"`,
@@ -58,25 +56,20 @@ function exportToCsv(nodes: WikiNode[], filename: string = "feishu_wiki_links.cs
 // ─── Type Stats ───────────────────────────────────────────────────────────────
 function TypeStats({ nodes }: { nodes: WikiNode[] }) {
   const counts: Record<string, number> = {};
-  for (const n of nodes) {
-    counts[n.obj_type] = (counts[n.obj_type] ?? 0) + 1;
-  }
+  for (const n of nodes) counts[n.obj_type] = (counts[n.obj_type] ?? 0) + 1;
   const typeColors: Record<string, string> = {
-    doc: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-    docx: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300",
-    wiki: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300",
-    sheet: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300",
-    bitable: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
-    mindnote: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300",
-    file: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+    doc: "bg-blue-100 text-blue-700",
+    docx: "bg-blue-100 text-blue-700",
+    wiki: "bg-purple-100 text-purple-700",
+    sheet: "bg-green-100 text-green-700",
+    bitable: "bg-orange-100 text-orange-700",
+    mindnote: "bg-pink-100 text-pink-700",
+    file: "bg-gray-100 text-gray-700",
   };
   return (
     <div className="flex flex-wrap gap-1.5">
       {Object.entries(counts).map(([type, count]) => (
-        <span
-          key={type}
-          className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", typeColors[type] ?? typeColors.file)}
-        >
+        <span key={type} className={cn("px-2 py-0.5 rounded-full text-xs font-medium", typeColors[type] ?? typeColors.file)}>
           {type}: {count}
         </span>
       ))}
@@ -84,34 +77,70 @@ function TypeStats({ nodes }: { nodes: WikiNode[] }) {
   );
 }
 
+// ─── Credentials Guide ────────────────────────────────────────────────────────
+function CredentialsGuide() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border border-border rounded-lg overflow-hidden">
+      <button
+        className="w-full flex items-center justify-between px-4 py-2.5 text-xs font-medium bg-muted/40 hover:bg-muted/70 transition-colors text-left"
+        onClick={() => setOpen(v => !v)}
+      >
+        <span className="flex items-center gap-1.5">
+          <Info className="w-3.5 h-3.5 text-blue-500" />
+          How to get Feishu App credentials
+        </span>
+        {open ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+      </button>
+      {open && (
+        <div className="px-4 py-3 space-y-3 text-xs bg-blue-50/40 dark:bg-blue-900/10 border-t border-border">
+          <div>
+            <p className="font-semibold text-foreground mb-1.5">Option A — App Credentials (recommended)</p>
+            <ol className="space-y-1 text-muted-foreground list-decimal list-inside">
+              <li>Go to <a href="https://open.feishu.cn/app" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline inline-flex items-center gap-0.5">open.feishu.cn/app <ExternalLink className="w-2.5 h-2.5" /></a> and create a new app</li>
+              <li>Under <strong className="text-foreground">Permissions &amp; Scopes</strong>, enable: <code className="bg-muted px-1 rounded">wiki:wiki:readonly</code></li>
+              <li>Under <strong className="text-foreground">Version Management</strong>, publish the app</li>
+              <li>Copy the <strong className="text-foreground">App ID</strong> and <strong className="text-foreground">App Secret</strong> from the app credentials page</li>
+            </ol>
+          </div>
+          <Separator />
+          <div>
+            <p className="font-semibold text-foreground mb-1.5">Option B — User Access Token (quick test)</p>
+            <ol className="space-y-1 text-muted-foreground list-decimal list-inside">
+              <li>Go to <a href="https://open.feishu.cn/api-explorer/cli_a5b3f3b3b3b3b3b3" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline inline-flex items-center gap-0.5">Feishu API Explorer <ExternalLink className="w-2.5 h-2.5" /></a></li>
+              <li>Log in with your Feishu account</li>
+              <li>Copy the <strong className="text-foreground">User Access Token</strong> shown at the top</li>
+            </ol>
+            <p className="text-amber-600 dark:text-amber-400 mt-1.5">⚠ User tokens expire after 2 hours.</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function Home() {
-  // Form state
   const [wikiUrl, setWikiUrl] = useState("");
   const [appId, setAppId] = useState("");
   const [appSecret, setAppSecret] = useState("");
   const [userToken, setUserToken] = useState("");
   const [showSecret, setShowSecret] = useState(false);
-  const [showAuthPanel, setShowAuthPanel] = useState(false);
   const [authMode, setAuthMode] = useState<"app" | "token">("app");
 
-  // Results state
   const [nodes, setNodes] = useState<WikiNode[]>([]);
   const [tree, setTree] = useState<WikiNode[]>([]);
   const [spaceId, setSpaceId] = useState("");
   const [domain, setDomain] = useState("");
-  const [crawlMode, setCrawlMode] = useState<"api" | "scrape" | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("tree");
 
-  // Mutation
   const crawlMutation = trpc.wiki.crawl.useMutation({
     onSuccess: (data) => {
       setNodes(data.nodes as WikiNode[]);
       setTree(data.tree as WikiNode[]);
       setSpaceId(data.spaceId);
       setDomain(data.domain);
-      setCrawlMode(data.mode);
     },
   });
 
@@ -121,51 +150,38 @@ export default function Home() {
     if (!wikiUrl.trim()) return;
     crawlMutation.mutate({
       url: wikiUrl.trim(),
-      appId: authMode === "app" && showAuthPanel ? appId.trim() || undefined : undefined,
-      appSecret: authMode === "app" && showAuthPanel ? appSecret.trim() || undefined : undefined,
-      userAccessToken: authMode === "token" && showAuthPanel ? userToken.trim() || undefined : undefined,
+      appId: authMode === "app" ? appId.trim() || undefined : undefined,
+      appSecret: authMode === "app" ? appSecret.trim() || undefined : undefined,
+      userAccessToken: authMode === "token" ? userToken.trim() || undefined : undefined,
     });
-  }, [wikiUrl, appId, appSecret, userToken, authMode, showAuthPanel, crawlMutation]);
-
-  const handleTestAuth = useCallback(() => {
-    if (!appId || !appSecret) return;
-    testAuthMutation.mutate({ appId, appSecret });
-  }, [appId, appSecret, testAuthMutation]);
+  }, [wikiUrl, appId, appSecret, userToken, authMode, crawlMutation]);
 
   const handleExportCsv = useCallback(() => {
-    if (nodes.length === 0) return;
-    const urlSlug = spaceId || "wiki";
-    exportToCsv(nodes, `feishu_wiki_${urlSlug}_${new Date().toISOString().slice(0, 10)}.csv`);
+    if (!nodes.length) return;
+    exportToCsv(nodes, `feishu_wiki_${spaceId || "export"}_${new Date().toISOString().slice(0, 10)}.csv`);
   }, [nodes, spaceId]);
 
   const hasResults = nodes.length > 0;
   const isLoading = crawlMutation.isPending;
   const error = crawlMutation.error;
-  const hasAuth = showAuthPanel && ((authMode === "app" && appId && appSecret) || (authMode === "token" && userToken));
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
-      <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-20">
+      <header className="border-b border-border bg-card/60 backdrop-blur-sm sticky top-0 z-20">
         <div className="container flex items-center justify-between h-14">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
               <BookOpen className="w-4 h-4 text-primary" />
             </div>
             <div>
-              <h1 className="text-sm font-semibold text-foreground leading-tight">Feishu Wiki Crawler</h1>
+              <h1 className="text-sm font-semibold leading-tight">Feishu Wiki Crawler</h1>
               <p className="text-xs text-muted-foreground leading-tight">Extract all links from Feishu Wiki spaces</p>
             </div>
           </div>
           {hasResults && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5 text-xs"
-              onClick={handleExportCsv}
-            >
-              <Download className="w-3.5 h-3.5" />
-              Export CSV
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleExportCsv}>
+              <Download className="w-3.5 h-3.5" /> Export CSV
             </Button>
           )}
         </div>
@@ -177,13 +193,13 @@ export default function Home() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base flex items-center gap-2">
               <Link2 className="w-4 h-4 text-primary" />
-              Wiki URL
+              Wiki URL &amp; Credentials
             </CardTitle>
             <CardDescription className="text-xs">
-              Paste a Feishu Wiki URL. Public wikis work without credentials (browser-based extraction). Private wikis require App credentials.
+              Feishu Wiki API requires authentication. Enter your App credentials or User Access Token to crawl any wiki.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-4">
             {/* URL Input */}
             <div className="flex gap-2">
               <Input
@@ -198,174 +214,72 @@ export default function Home() {
                 disabled={isLoading || !wikiUrl.trim()}
                 className="h-9 px-4 gap-2 shrink-0"
               >
-                {isLoading ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    Crawling...
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    Crawl
-                  </>
-                )}
+                {isLoading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Crawling...</> : <><RefreshCw className="w-3.5 h-3.5" />Crawl</>}
               </Button>
             </div>
 
-            {/* Mode indicator */}
-            <div className="flex items-center gap-3 text-xs">
-              <div
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors cursor-pointer",
-                  !hasAuth
-                    ? "bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400"
-                    : "border-border text-muted-foreground hover:border-border/80"
-                )}
-                onClick={() => setShowAuthPanel(false)}
-              >
-                <Globe className="w-3 h-3" />
-                Public mode (no credentials)
+            {/* Auth mode tabs */}
+            <div>
+              <div className="flex items-center gap-1.5 mb-2">
+                <Key className="w-3.5 h-3.5 text-muted-foreground" />
+                <span className="text-xs font-medium text-muted-foreground">Authentication</span>
               </div>
-              <div
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors cursor-pointer",
-                  hasAuth
-                    ? "bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400"
-                    : "border-border text-muted-foreground hover:border-border/80"
-                )}
-                onClick={() => setShowAuthPanel(true)}
-              >
-                <Lock className="w-3 h-3" />
-                Private mode (with credentials)
+              <div className="flex gap-1 p-1 bg-muted rounded-md w-fit mb-3">
+                <button
+                  className={cn("px-3 py-1 text-xs rounded font-medium transition-colors", authMode === "app" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                  onClick={() => setAuthMode("app")}
+                >
+                  App Credentials
+                </button>
+                <button
+                  className={cn("px-3 py-1 text-xs rounded font-medium transition-colors", authMode === "token" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                  onClick={() => setAuthMode("token")}
+                >
+                  User Access Token
+                </button>
               </div>
+
+              {authMode === "app" ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">App ID</Label>
+                    <Input placeholder="cli_xxxxxxxxxx" value={appId} onChange={e => setAppId(e.target.value)} className="h-8 text-xs font-mono" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">App Secret</Label>
+                    <div className="relative">
+                      <Input
+                        type={showSecret ? "text" : "password"}
+                        placeholder="App Secret"
+                        value={appSecret}
+                        onChange={e => setAppSecret(e.target.value)}
+                        className="h-8 text-xs font-mono pr-8"
+                      />
+                      <button className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowSecret(v => !v)} type="button">
+                        {showSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="col-span-2 flex items-center gap-2">
+                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!appId || !appSecret || testAuthMutation.isPending} onClick={() => testAuthMutation.mutate({ appId, appSecret })}>
+                      {testAuthMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                      Test Connection
+                    </Button>
+                    {testAuthMutation.isSuccess && <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Connected</span>}
+                    {testAuthMutation.isError && <span className="text-xs text-destructive flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> {testAuthMutation.error.message}</span>}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">User Access Token</Label>
+                  <Input placeholder="u-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value={userToken} onChange={e => setUserToken(e.target.value)} className="h-8 text-xs font-mono" />
+                  <p className="text-xs text-amber-600 dark:text-amber-400">⚠ User tokens expire after 2 hours.</p>
+                </div>
+              )}
             </div>
 
-            {/* Auth Toggle */}
-            <button
-              className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              onClick={() => setShowAuthPanel(v => !v)}
-            >
-              <Key className="w-3.5 h-3.5" />
-              {showAuthPanel ? "Hide" : "Add"} authentication credentials (for private wikis)
-              {showAuthPanel ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-            </button>
-
-            {/* Auth Panel */}
-            {showAuthPanel && (
-              <div className="border border-border rounded-lg p-4 space-y-3 bg-muted/30">
-                {/* Auth mode tabs */}
-                <div className="flex gap-1 p-1 bg-muted rounded-md w-fit">
-                  <button
-                    className={cn(
-                      "px-3 py-1 text-xs rounded font-medium transition-colors",
-                      authMode === "app"
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                    onClick={() => setAuthMode("app")}
-                  >
-                    App Credentials
-                  </button>
-                  <button
-                    className={cn(
-                      "px-3 py-1 text-xs rounded font-medium transition-colors",
-                      authMode === "token"
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                    onClick={() => setAuthMode("token")}
-                  >
-                    User Access Token
-                  </button>
-                </div>
-
-                {authMode === "app" ? (
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">App ID</Label>
-                      <Input
-                        placeholder="cli_xxxxxxxxxx"
-                        value={appId}
-                        onChange={e => setAppId(e.target.value)}
-                        className="h-8 text-xs font-mono"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs">App Secret</Label>
-                      <div className="relative">
-                        <Input
-                          type={showSecret ? "text" : "password"}
-                          placeholder="App Secret"
-                          value={appSecret}
-                          onChange={e => setAppSecret(e.target.value)}
-                          className="h-8 text-xs font-mono pr-8"
-                        />
-                        <button
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                          onClick={() => setShowSecret(v => !v)}
-                          type="button"
-                        >
-                          {showSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                    </div>
-                    <div className="col-span-2 flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 text-xs"
-                        disabled={!appId || !appSecret || testAuthMutation.isPending}
-                        onClick={handleTestAuth}
-                      >
-                        {testAuthMutation.isPending ? (
-                          <Loader2 className="w-3 h-3 animate-spin mr-1" />
-                        ) : null}
-                        Test Connection
-                      </Button>
-                      {testAuthMutation.isSuccess && (
-                        <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> Connected successfully
-                        </span>
-                      )}
-                      {testAuthMutation.isError && (
-                        <span className="text-xs text-destructive flex items-center gap-1">
-                          <AlertCircle className="w-3.5 h-3.5" /> {testAuthMutation.error.message}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">User Access Token</Label>
-                    <Input
-                      placeholder="u-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-                      value={userToken}
-                      onChange={e => setUserToken(e.target.value)}
-                      className="h-8 text-xs font-mono"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Obtain from Feishu Open Platform API Explorer after login.
-                    </p>
-                  </div>
-                )}
-
-                <Alert className="py-2 border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-900/10">
-                  <Info className="w-3.5 h-3.5 text-blue-500" />
-                  <AlertDescription className="text-xs text-blue-700 dark:text-blue-300 ml-1">
-                    Get your App ID and Secret from{" "}
-                    <a
-                      href="https://open.feishu.cn/app"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline"
-                    >
-                      Feishu Open Platform
-                    </a>
-                    . Your app needs <strong>View wiki space node list</strong> permission.
-                  </AlertDescription>
-                </Alert>
-              </div>
-            )}
+            {/* Credentials guide */}
+            <CredentialsGuide />
           </CardContent>
         </Card>
 
@@ -373,25 +287,17 @@ export default function Home() {
         {error && (
           <Alert variant="destructive" className="py-3">
             <AlertCircle className="w-4 h-4" />
-            <AlertDescription className="text-sm whitespace-pre-wrap ml-1">
-              {error.message}
-            </AlertDescription>
+            <AlertDescription className="text-sm whitespace-pre-wrap ml-1">{error.message}</AlertDescription>
           </Alert>
         )}
 
-        {/* Loading state */}
+        {/* Loading */}
         {isLoading && (
           <Card className="shadow-sm">
             <CardContent className="py-10 flex flex-col items-center gap-3">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p className="text-sm font-medium text-foreground">
-                {hasAuth ? "Fetching wiki nodes via API..." : "Loading wiki in browser (this may take 15–30s)..."}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {hasAuth
-                  ? "Recursively fetching all child nodes with pagination support."
-                  : "Opening a headless browser to render the public wiki and extract all page links."}
-              </p>
+              <p className="text-sm font-medium">Fetching wiki nodes via Feishu API...</p>
+              <p className="text-xs text-muted-foreground">Recursively fetching all child nodes. Large wikis may take a moment.</p>
             </CardContent>
           </Card>
         )}
@@ -399,90 +305,38 @@ export default function Home() {
         {/* Results */}
         {hasResults && !isLoading && (
           <div className="flex flex-col gap-4 flex-1">
-            {/* Stats bar */}
             <div className="flex items-center justify-between flex-wrap gap-3">
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-green-500" />
-                  <span className="text-sm font-semibold text-foreground">{nodes.length} pages found</span>
+                  <span className="text-sm font-semibold">{nodes.length} pages found</span>
                 </div>
-                {crawlMode && (
-                  <>
-                    <Separator orientation="vertical" className="h-4" />
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full",
-                        crawlMode === "api"
-                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                          : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                      )}
-                    >
-                      {crawlMode === "api" ? <Zap className="w-3 h-3" /> : <Globe className="w-3 h-3" />}
-                      {crawlMode === "api" ? "Full API mode" : "Browser scrape mode"}
-                    </span>
-                  </>
-                )}
                 <Separator orientation="vertical" className="h-4" />
                 <span className="text-xs text-muted-foreground font-mono">{domain}</span>
+                <Separator orientation="vertical" className="h-4" />
+                <span className="text-xs text-muted-foreground">Space: <code className="font-mono">{spaceId}</code></span>
               </div>
               <div className="flex items-center gap-2">
                 <TypeStats nodes={nodes} />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 gap-1.5 text-xs"
-                  onClick={handleExportCsv}
-                >
-                  <Download className="w-3 h-3" />
-                  CSV
+                <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleExportCsv}>
+                  <Download className="w-3 h-3" /> CSV
                 </Button>
               </div>
             </div>
 
-            {/* Scrape mode notice */}
-            {crawlMode === "scrape" && (
-              <Alert className="py-2 border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-900/10">
-                <Info className="w-3.5 h-3.5 text-amber-600" />
-                <AlertDescription className="text-xs text-amber-700 dark:text-amber-300 ml-1">
-                  <strong>Browser scrape mode:</strong> Results may be partial — only pages visible in the sidebar were captured.
-                  For complete results with full metadata, provide{" "}
-                  <button
-                    className="underline font-medium"
-                    onClick={() => setShowAuthPanel(true)}
-                  >
-                    App credentials
-                  </button>
-                  {" "}to use the official Feishu API.
-                </AlertDescription>
-              </Alert>
-            )}
-
-            {/* Tabs: Tree / Table */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
               <TabsList className="w-fit h-8">
-                <TabsTrigger value="tree" className="text-xs gap-1.5 h-7 px-3">
-                  <TreePine className="w-3.5 h-3.5" />
-                  Tree View
-                </TabsTrigger>
-                <TabsTrigger value="table" className="text-xs gap-1.5 h-7 px-3">
-                  <Table2 className="w-3.5 h-3.5" />
-                  Table View
-                </TabsTrigger>
+                <TabsTrigger value="tree" className="text-xs gap-1.5 h-7 px-3"><TreePine className="w-3.5 h-3.5" />Tree View</TabsTrigger>
+                <TabsTrigger value="table" className="text-xs gap-1.5 h-7 px-3"><Table2 className="w-3.5 h-3.5" />Table View</TabsTrigger>
               </TabsList>
 
-              {/* Tree View */}
               <TabsContent value="tree" className="flex-1 mt-3">
-                <Card className="shadow-sm h-full">
+                <Card className="shadow-sm">
                   <CardHeader className="pb-2 pt-3 px-4">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-sm">Wiki Hierarchy</CardTitle>
                       <div className="w-56">
-                        <Input
-                          placeholder="Search tree..."
-                          value={searchQuery}
-                          onChange={e => setSearchQuery(e.target.value)}
-                          className="h-7 text-xs"
-                        />
+                        <Input placeholder="Search tree..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="h-7 text-xs" />
                       </div>
                     </div>
                   </CardHeader>
@@ -492,15 +346,10 @@ export default function Home() {
                 </Card>
               </TabsContent>
 
-              {/* Table View */}
               <TabsContent value="table" className="flex-1 mt-3">
                 <Card className="shadow-sm">
-                  <CardContent className="pt-4 pb-4 flex flex-col" style={{ minHeight: "500px" }}>
-                    <WikiTable
-                      nodes={nodes}
-                      searchQuery={searchQuery}
-                      onSearchChange={setSearchQuery}
-                    />
+                  <CardContent className="pt-4 pb-4" style={{ minHeight: "500px" }}>
+                    <WikiTable nodes={nodes} searchQuery={searchQuery} onSearchChange={setSearchQuery} />
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -511,36 +360,17 @@ export default function Home() {
         {/* Empty state */}
         {!hasResults && !isLoading && !error && (
           <Card className="shadow-sm border-dashed">
-            <CardContent className="py-16 flex flex-col items-center gap-4 text-center">
+            <CardContent className="py-14 flex flex-col items-center gap-4 text-center">
               <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
                 <BookOpen className="w-8 h-8 text-primary/60" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-foreground mb-1">Ready to crawl</h3>
+                <h3 className="text-base font-semibold mb-1">Ready to crawl</h3>
                 <p className="text-sm text-muted-foreground max-w-sm">
-                  Enter a Feishu Wiki URL above. Public wikis work immediately — no credentials needed.
+                  Enter a Feishu Wiki URL and your App credentials above, then click <strong>Crawl</strong>.
                 </p>
               </div>
-
-              {/* Mode comparison */}
-              <div className="grid grid-cols-2 gap-3 w-full max-w-lg text-left">
-                <div className="border border-green-200 dark:border-green-800 rounded-lg p-3 bg-green-50/50 dark:bg-green-900/10">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <Globe className="w-3.5 h-3.5 text-green-600" />
-                    <span className="text-xs font-semibold text-green-700 dark:text-green-400">Public Mode</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">No credentials needed. Uses browser rendering. May capture partial results.</p>
-                </div>
-                <div className="border border-blue-200 dark:border-blue-800 rounded-lg p-3 bg-blue-50/50 dark:bg-blue-900/10">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <Zap className="w-3.5 h-3.5 text-blue-600" />
-                    <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">API Mode</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">Requires App ID + Secret. Full recursive crawl with complete metadata.</p>
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1 text-xs text-muted-foreground bg-muted/50 rounded-lg px-4 py-3 text-left w-full max-w-lg">
+              <div className="flex flex-col gap-1 text-xs text-muted-foreground bg-muted/50 rounded-lg px-4 py-3 text-left">
                 <p className="font-medium text-foreground mb-1">Example URLs:</p>
                 <code className="font-mono">https://waytoagi.feishu.cn/wiki/CCR4wl3upi6dF9kVE5YcAcGcnlU</code>
                 <code className="font-mono">https://company.feishu.cn/wiki/SPACE_TOKEN</code>
@@ -551,18 +381,10 @@ export default function Home() {
         )}
       </main>
 
-      {/* Footer */}
       <footer className="border-t border-border py-3">
         <div className="container flex items-center justify-between text-xs text-muted-foreground">
           <span>Feishu Wiki Crawler — Feishu Open Platform API</span>
-          <a
-            href="https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/wiki-v2/space-node/list"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="hover:text-foreground transition-colors"
-          >
-            API Docs
-          </a>
+          <a href="https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/wiki-v2/space-node/list" target="_blank" rel="noopener noreferrer" className="hover:text-foreground transition-colors">API Docs</a>
         </div>
       </footer>
     </div>

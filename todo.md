@@ -22,6 +22,8 @@
 - [x] Pagination support for large result sets (50 rows per page in table)
 
 ## Bug Fixes
+- [x] Fix: Puppeteer navigation timeout 30s - removed Puppeteer entirely
+- [x] Fix: public wiki mode removed - Feishu blocks all scraping; clear error + guide shown instead
 - [x] Fix: public wikis require no credentials - add HTML scraping fallback
 - [x] Fix: improve error message to guide users better
 - [x] Fix: add "No Auth" mode for public wikis that scrapes page links
