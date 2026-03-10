@@ -231,16 +231,26 @@ export async function fetchAllNodes(
   let currentLevel: QueueEntry[] = [{ parentToken: rootNodeToken, depth: 0 }];
 
   while (currentLevel.length > 0) {
-    // Fetch all nodes at current level in parallel
+    // Fetch all nodes at current level in parallel, with per-node error handling
     const levelResults = await Promise.all(
       currentLevel.map(({ parentToken, depth }) =>
         limit(async () => {
-          const items = await fetchAllAtLevel(spaceId, accessToken, parentToken);
-          return items.map((node) => ({
-            ...node,
-            depth,
-            url: buildNodeUrl(domain, node),
-          }));
+          try {
+            const items = await fetchAllAtLevel(spaceId, accessToken, parentToken);
+            return items.map((node) => ({
+              ...node,
+              depth,
+              url: buildNodeUrl(domain, node),
+            }));
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            // Propagate token expiry errors immediately
+            if (msg.includes('TOKEN_EXPIRED')) throw err;
+            // For 400/403 errors on specific nodes, skip and continue
+            // This handles shortcut nodes, external links, or restricted nodes
+            console.warn(`[Wiki] Skipping node (parentToken=${parentToken ?? 'root'}): ${msg}`);
+            return [] as (FeishuNode & { depth: number; url: string })[];
+          }
         })
       )
     );

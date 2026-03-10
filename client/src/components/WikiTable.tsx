@@ -147,8 +147,9 @@ export function WikiTable({ nodes, searchQuery, onSearchChange }: WikiTableProps
   }, []);
 
   const filtered = useMemo(() => {
-    if (!searchQuery) return nodes;
-    const q = searchQuery.toLowerCase();
+    const trimmed = searchQuery.trim();
+    if (!trimmed) return nodes;
+    const q = trimmed.toLowerCase();
     return nodes.filter(n =>
       n.title?.toLowerCase().includes(q) ||
       n.obj_type?.toLowerCase().includes(q) ||
@@ -168,6 +169,8 @@ export function WikiTable({ nodes, searchQuery, onSearchChange }: WikiTableProps
     });
   }, [filtered, sortField, sortDir]);
 
+  const trimmedSearch = searchQuery.trim();
+
   const { scrollRef, startIndex, endIndex, totalHeight, offsetY, onScroll, scrollToTop } = useVirtualScroll(
     sorted.length,
     ROW_HEIGHT,
@@ -185,9 +188,9 @@ export function WikiTable({ nodes, searchQuery, onSearchChange }: WikiTableProps
       <div className="flex items-center gap-2">
         <div className="relative flex-1">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
-          <Input
+            <Input
             placeholder="Search by title, type, or URL..."
-            value={searchQuery}
+            value={trimmedSearch}
             onChange={e => onSearchChange(e.target.value)}
             className="h-8 text-sm pl-8"
           />
@@ -242,7 +245,7 @@ export function WikiTable({ nodes, searchQuery, onSearchChange }: WikiTableProps
                       <div className="px-3 flex items-center gap-1.5 overflow-hidden" style={{ width: COL.title, minWidth: COL.title }}>
                         <span className="inline-block w-0.5 h-4 bg-border/60 flex-shrink-0 rounded" style={{ marginLeft: `${(node.depth ?? 0) * 10}px` }} />
                         <span className="truncate font-medium text-foreground text-xs" title={node.title}>
-                          {searchQuery ? highlightText(node.title || "(Untitled)", searchQuery) : (node.title || "(Untitled)")}
+                          {trimmedSearch ? highlightText(node.title || "(Untitled)", trimmedSearch) : (node.title || "(Untitled)")}
                         </span>
                       </div>
                       {/* Type */}

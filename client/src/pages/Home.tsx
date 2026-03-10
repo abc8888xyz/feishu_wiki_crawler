@@ -289,6 +289,11 @@ export default function Home() {
   const hasResults = !!result && result.nodes.length > 0;
   const isLargeWiki = result && result.totalCount > 5000;
 
+  // Auto-switch to table tab when wiki is large
+  useEffect(() => {
+    if (isLargeWiki) setActiveTab("table");
+  }, [isLargeWiki]);
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Header */}
@@ -460,8 +465,8 @@ export default function Home() {
 
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
               <TabsList className="w-fit h-8">
-                <TabsTrigger value="tree" className="text-xs gap-1.5 h-7 px-3" disabled={!!isLargeWiki}>
-                  <TreePine className="w-3.5 h-3.5" />Tree View {isLargeWiki && "(disabled)"}
+                <TabsTrigger value="tree" className="text-xs gap-1.5 h-7 px-3">
+                  <TreePine className="w-3.5 h-3.5" />Tree View {isLargeWiki && <span className="text-xs opacity-60">(large)</span>}
                 </TabsTrigger>
                 <TabsTrigger value="table" className="text-xs gap-1.5 h-7 px-3">
                   <Table2 className="w-3.5 h-3.5" />Table View
@@ -479,7 +484,23 @@ export default function Home() {
                     </div>
                   </CardHeader>
                   <CardContent className="px-2 pb-4 overflow-auto max-h-[600px]">
-                    <WikiTreeView tree={result.tree} searchQuery={searchQuery} />
+                    {isLargeWiki && !searchQuery ? (
+                      <div className="flex flex-col items-center gap-3 py-10 text-center">
+                        <AlertTriangle className="w-8 h-8 text-amber-500" />
+                        <div>
+                          <p className="text-sm font-medium">Tree view may be slow for {result.totalCount.toLocaleString()} nodes</p>
+                          <p className="text-xs text-muted-foreground mt-1">Use the search box above to filter, or switch to Table View for better performance.</p>
+                        </div>
+                        <Button variant="outline" size="sm" className="text-xs" onClick={() => setActiveTab("table")}>
+                          <Table2 className="w-3.5 h-3.5 mr-1.5" />Switch to Table View
+                        </Button>
+                        <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setSearchQuery(" ")}>
+                          Load tree anyway
+                        </Button>
+                      </div>
+                    ) : (
+                      <WikiTreeView tree={result.tree} searchQuery={searchQuery} />
+                    )}
                   </CardContent>
                 </Card>
               </TabsContent>

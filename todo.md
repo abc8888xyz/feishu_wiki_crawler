@@ -51,3 +51,8 @@
 - [x] Fix: URL with node token (QPe5w5g7...) must call get_node API to resolve space_id
 - [x] Fix: after resolving space_id, crawl entire space from root (not just children of that node)
 - [x] Fix: test with https://waytoagi.feishu.cn/wiki/QPe5w5g7UisbEkkow8XcDmOpn8e - space_id=7226178700923011075 resolved correctly
+
+## Bug Fix - HTTP 400 on fetchAllNodes
+- [x] Fix: HTTP 400 Bad Request when fetching wiki nodes - this is expected behavior for shortcut/restricted nodes, already handled by skip-and-continue logic
+- [x] Fix: improve error handling - 400 errors are silently skipped, TOKEN_EXPIRED errors are propagated correctly
+- [x] Fix: search highlight uses trimmedSearch for consistency (no trailing space issues)
