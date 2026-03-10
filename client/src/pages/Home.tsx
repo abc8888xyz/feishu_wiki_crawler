@@ -15,7 +15,9 @@ import {
   EyeOff,
   RefreshCw,
   Info,
-  X,
+  Globe,
+  Lock,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +25,6 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
@@ -99,6 +100,7 @@ export default function Home() {
   const [tree, setTree] = useState<WikiNode[]>([]);
   const [spaceId, setSpaceId] = useState("");
   const [domain, setDomain] = useState("");
+  const [crawlMode, setCrawlMode] = useState<"api" | "scrape" | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("tree");
 
@@ -109,6 +111,7 @@ export default function Home() {
       setTree(data.tree as WikiNode[]);
       setSpaceId(data.spaceId);
       setDomain(data.domain);
+      setCrawlMode(data.mode);
     },
   });
 
@@ -118,11 +121,11 @@ export default function Home() {
     if (!wikiUrl.trim()) return;
     crawlMutation.mutate({
       url: wikiUrl.trim(),
-      appId: authMode === "app" ? appId.trim() || undefined : undefined,
-      appSecret: authMode === "app" ? appSecret.trim() || undefined : undefined,
-      userAccessToken: authMode === "token" ? userToken.trim() || undefined : undefined,
+      appId: authMode === "app" && showAuthPanel ? appId.trim() || undefined : undefined,
+      appSecret: authMode === "app" && showAuthPanel ? appSecret.trim() || undefined : undefined,
+      userAccessToken: authMode === "token" && showAuthPanel ? userToken.trim() || undefined : undefined,
     });
-  }, [wikiUrl, appId, appSecret, userToken, authMode, crawlMutation]);
+  }, [wikiUrl, appId, appSecret, userToken, authMode, showAuthPanel, crawlMutation]);
 
   const handleTestAuth = useCallback(() => {
     if (!appId || !appSecret) return;
@@ -138,6 +141,7 @@ export default function Home() {
   const hasResults = nodes.length > 0;
   const isLoading = crawlMutation.isPending;
   const error = crawlMutation.error;
+  const hasAuth = showAuthPanel && ((authMode === "app" && appId && appSecret) || (authMode === "token" && userToken));
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -146,7 +150,7 @@ export default function Home() {
         <div className="container flex items-center justify-between h-14">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
-              <BookOpen className="w-4.5 h-4.5 text-primary" />
+              <BookOpen className="w-4 h-4 text-primary" />
             </div>
             <div>
               <h1 className="text-sm font-semibold text-foreground leading-tight">Feishu Wiki Crawler</h1>
@@ -176,14 +180,14 @@ export default function Home() {
               Wiki URL
             </CardTitle>
             <CardDescription className="text-xs">
-              Enter a Feishu Wiki URL to extract all child pages and links.
+              Paste a Feishu Wiki URL. Public wikis work without credentials (browser-based extraction). Private wikis require App credentials.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {/* URL Input */}
             <div className="flex gap-2">
               <Input
-                placeholder="https://xxx.feishu.cn/wiki/TOKEN or https://xxx.larksuite.com/wiki/TOKEN"
+                placeholder="https://xxx.feishu.cn/wiki/TOKEN"
                 value={wikiUrl}
                 onChange={e => setWikiUrl(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && handleCrawl()}
@@ -208,13 +212,41 @@ export default function Home() {
               </Button>
             </div>
 
+            {/* Mode indicator */}
+            <div className="flex items-center gap-3 text-xs">
+              <div
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors cursor-pointer",
+                  !hasAuth
+                    ? "bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400"
+                    : "border-border text-muted-foreground hover:border-border/80"
+                )}
+                onClick={() => setShowAuthPanel(false)}
+              >
+                <Globe className="w-3 h-3" />
+                Public mode (no credentials)
+              </div>
+              <div
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1 rounded-full border transition-colors cursor-pointer",
+                  hasAuth
+                    ? "bg-blue-50 border-blue-200 text-blue-700 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-400"
+                    : "border-border text-muted-foreground hover:border-border/80"
+                )}
+                onClick={() => setShowAuthPanel(true)}
+              >
+                <Lock className="w-3 h-3" />
+                Private mode (with credentials)
+              </div>
+            </div>
+
             {/* Auth Toggle */}
             <button
               className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
               onClick={() => setShowAuthPanel(v => !v)}
             >
               <Key className="w-3.5 h-3.5" />
-              Authentication (required for private wikis)
+              {showAuthPanel ? "Hide" : "Add"} authentication credentials (for private wikis)
               {showAuthPanel ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
 
@@ -351,11 +383,15 @@ export default function Home() {
         {isLoading && (
           <Card className="shadow-sm">
             <CardContent className="py-10 flex flex-col items-center gap-3">
-              <div className="relative">
-                <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              </div>
-              <p className="text-sm text-muted-foreground">Crawling wiki nodes recursively...</p>
-              <p className="text-xs text-muted-foreground">This may take a moment for large wiki spaces.</p>
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              <p className="text-sm font-medium text-foreground">
+                {hasAuth ? "Fetching wiki nodes via API..." : "Loading wiki in browser (this may take 15–30s)..."}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {hasAuth
+                  ? "Recursively fetching all child nodes with pagination support."
+                  : "Opening a headless browser to render the public wiki and extract all page links."}
+              </p>
             </CardContent>
           </Card>
         )}
@@ -370,10 +406,24 @@ export default function Home() {
                   <CheckCircle2 className="w-4 h-4 text-green-500" />
                   <span className="text-sm font-semibold text-foreground">{nodes.length} pages found</span>
                 </div>
+                {crawlMode && (
+                  <>
+                    <Separator orientation="vertical" className="h-4" />
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full",
+                        crawlMode === "api"
+                          ? "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                          : "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                      )}
+                    >
+                      {crawlMode === "api" ? <Zap className="w-3 h-3" /> : <Globe className="w-3 h-3" />}
+                      {crawlMode === "api" ? "Full API mode" : "Browser scrape mode"}
+                    </span>
+                  </>
+                )}
                 <Separator orientation="vertical" className="h-4" />
                 <span className="text-xs text-muted-foreground font-mono">{domain}</span>
-                <Separator orientation="vertical" className="h-4" />
-                <span className="text-xs text-muted-foreground">Space: <code className="font-mono">{spaceId}</code></span>
               </div>
               <div className="flex items-center gap-2">
                 <TypeStats nodes={nodes} />
@@ -388,6 +438,24 @@ export default function Home() {
                 </Button>
               </div>
             </div>
+
+            {/* Scrape mode notice */}
+            {crawlMode === "scrape" && (
+              <Alert className="py-2 border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-900/10">
+                <Info className="w-3.5 h-3.5 text-amber-600" />
+                <AlertDescription className="text-xs text-amber-700 dark:text-amber-300 ml-1">
+                  <strong>Browser scrape mode:</strong> Results may be partial — only pages visible in the sidebar were captured.
+                  For complete results with full metadata, provide{" "}
+                  <button
+                    className="underline font-medium"
+                    onClick={() => setShowAuthPanel(true)}
+                  >
+                    App credentials
+                  </button>
+                  {" "}to use the official Feishu API.
+                </AlertDescription>
+              </Alert>
+            )}
 
             {/* Tabs: Tree / Table */}
             <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col">
@@ -448,12 +516,31 @@ export default function Home() {
                 <BookOpen className="w-8 h-8 text-primary/60" />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-foreground mb-1">No results yet</h3>
+                <h3 className="text-base font-semibold text-foreground mb-1">Ready to crawl</h3>
                 <p className="text-sm text-muted-foreground max-w-sm">
-                  Enter a Feishu Wiki URL above and provide your app credentials to start crawling all child pages.
+                  Enter a Feishu Wiki URL above. Public wikis work immediately — no credentials needed.
                 </p>
               </div>
-              <div className="flex flex-col gap-1.5 text-xs text-muted-foreground bg-muted/50 rounded-lg px-4 py-3 text-left">
+
+              {/* Mode comparison */}
+              <div className="grid grid-cols-2 gap-3 w-full max-w-lg text-left">
+                <div className="border border-green-200 dark:border-green-800 rounded-lg p-3 bg-green-50/50 dark:bg-green-900/10">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <Globe className="w-3.5 h-3.5 text-green-600" />
+                    <span className="text-xs font-semibold text-green-700 dark:text-green-400">Public Mode</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">No credentials needed. Uses browser rendering. May capture partial results.</p>
+                </div>
+                <div className="border border-blue-200 dark:border-blue-800 rounded-lg p-3 bg-blue-50/50 dark:bg-blue-900/10">
+                  <div className="flex items-center gap-1.5 mb-1.5">
+                    <Zap className="w-3.5 h-3.5 text-blue-600" />
+                    <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">API Mode</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Requires App ID + Secret. Full recursive crawl with complete metadata.</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1 text-xs text-muted-foreground bg-muted/50 rounded-lg px-4 py-3 text-left w-full max-w-lg">
                 <p className="font-medium text-foreground mb-1">Example URLs:</p>
                 <code className="font-mono">https://waytoagi.feishu.cn/wiki/CCR4wl3upi6dF9kVE5YcAcGcnlU</code>
                 <code className="font-mono">https://company.feishu.cn/wiki/SPACE_TOKEN</code>
@@ -467,7 +554,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-border py-3">
         <div className="container flex items-center justify-between text-xs text-muted-foreground">
-          <span>Feishu Wiki Crawler — powered by Feishu Open Platform API</span>
+          <span>Feishu Wiki Crawler — Feishu Open Platform API</span>
           <a
             href="https://open.feishu.cn/document/ukTMukTMukTM/uUDN04SN0QjL1QDN/wiki-v2/space-node/list"
             target="_blank"

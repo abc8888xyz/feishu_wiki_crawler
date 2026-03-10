@@ -21,6 +21,12 @@
 - [x] Error handling and user-friendly error messages
 - [x] Pagination support for large result sets (50 rows per page in table)
 
+## Bug Fixes
+- [x] Fix: public wikis require no credentials - add HTML scraping fallback
+- [x] Fix: improve error message to guide users better
+- [x] Fix: add "No Auth" mode for public wikis that scrapes page links
+- [x] Fix: show clear distinction between public vs private wiki modes
+
 ## Testing
 - [x] Write vitest for Feishu API URL parsing
 - [x] Write vitest for recursive node fetching logic (buildTree)

@@ -9,8 +9,8 @@ import {
   getWikiNodeInfo,
   fetchAllNodes,
   buildTree,
-  type FeishuNode,
 } from "./feishuApi";
+import { scrapePublicWiki } from "./feishuScraper";
 
 export const appRouter = router({
   system: systemRouter,
@@ -35,8 +35,9 @@ export const appRouter = router({
       }),
 
     /**
-     * Crawl all nodes from a Feishu wiki space
-     * Supports both public (with app credentials) and private (with user token) wikis
+     * Crawl all nodes from a Feishu wiki space.
+     * - With credentials (appId+appSecret or userToken): uses official Feishu API (full data)
+     * - Without credentials: uses Puppeteer browser scraping (public wikis only, partial data)
      */
     crawl: publicProcedure
       .input(
@@ -53,62 +54,81 @@ export const appRouter = router({
         // Parse the URL
         const parsed = parseFeishuWikiUrl(url);
         if (!parsed.isValid) {
-          throw new Error("Invalid Feishu wiki URL. Please enter a valid URL like https://xxx.feishu.cn/wiki/TOKEN");
+          throw new Error(
+            "Invalid Feishu wiki URL. Please enter a valid URL like:\n" +
+            "https://xxx.feishu.cn/wiki/TOKEN"
+          );
         }
 
         const { domain, token } = parsed;
 
-        // Determine access token
-        let accessToken: string;
-        if (userAccessToken) {
-          accessToken = userAccessToken;
-        } else if (appId && appSecret) {
-          accessToken = await getTenantAccessToken(appId, appSecret);
-        } else {
-          // Try with a demo/public approach - some wikis are publicly accessible
-          // We'll attempt without auth first, and if it fails, ask for credentials
+        // ── Mode 1: Official API with credentials ──────────────────────────
+        const hasCredentials =
+          (appId && appSecret) || userAccessToken;
+
+        if (hasCredentials) {
+          let accessToken: string;
+          if (userAccessToken) {
+            accessToken = userAccessToken;
+          } else {
+            accessToken = await getTenantAccessToken(appId!, appSecret!);
+          }
+
+          // Resolve space_id from the token
+          let spaceId: string;
+          let rootNodeToken: string | undefined;
+
+          const nodeInfo = await getWikiNodeInfo(token, accessToken);
+          if (nodeInfo) {
+            spaceId = nodeInfo.space_id;
+            rootNodeToken = nodeInfo.node_token;
+          } else {
+            spaceId = token;
+          }
+
+          const allNodes = await fetchAllNodes(
+            spaceId,
+            accessToken,
+            domain,
+            rootNodeToken,
+            0
+          );
+
+          const tree = buildTree(allNodes);
+
+          return {
+            spaceId,
+            domain,
+            totalCount: allNodes.length,
+            nodes: allNodes,
+            tree,
+            mode: "api" as const,
+          };
+        }
+
+        // ── Mode 2: Public wiki scraping via Puppeteer ─────────────────────
+        const scrapedNodes = await scrapePublicWiki(url, domain, token);
+
+        if (scrapedNodes.length === 0) {
           throw new Error(
-            "Authentication required. Please provide either:\n" +
-            "1. Feishu App ID + App Secret (for app-level access)\n" +
-            "2. User Access Token (for user-level access)\n\n" +
-            "For public wikis like waytoagi.feishu.cn, you still need app credentials to use the API."
+            "Could not extract any pages from this wiki.\n\n" +
+            "This may be because:\n" +
+            "• The wiki is private and requires authentication\n" +
+            "• The wiki has no child pages\n" +
+            "• The page took too long to load\n\n" +
+            "For private wikis, please provide App ID + App Secret or a User Access Token."
           );
         }
 
-        // Resolve space_id from the token
-        // The token in the URL could be a space_id or a node_token
-        let spaceId: string;
-        let rootNodeToken: string | undefined;
-
-        // Try to get node info to resolve space_id
-        const nodeInfo = await getWikiNodeInfo(token, accessToken);
-        if (nodeInfo) {
-          spaceId = nodeInfo.space_id;
-          // If the token is a specific node (not root), set it as parent
-          rootNodeToken = nodeInfo.node_token;
-        } else {
-          // Assume the token is the space_id itself
-          spaceId = token;
-        }
-
-        // Fetch all nodes recursively
-        const allNodes = await fetchAllNodes(
-          spaceId,
-          accessToken,
-          domain,
-          rootNodeToken,
-          0
-        );
-
-        // Build tree structure
-        const tree = buildTree(allNodes);
+        const tree = buildTree(scrapedNodes);
 
         return {
-          spaceId,
+          spaceId: token,
           domain,
-          totalCount: allNodes.length,
-          nodes: allNodes,
+          totalCount: scrapedNodes.length,
+          nodes: scrapedNodes,
           tree,
+          mode: "scrape" as const,
         };
       }),
 
