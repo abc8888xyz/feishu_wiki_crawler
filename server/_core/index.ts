@@ -6,6 +6,7 @@ import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerChatRoutes } from "./chat";
 import { registerWikiCrawlRoute } from "../wikiCrawlRoute";
+import { registerWikiExportRoute } from "../wikiExportRoute";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -41,6 +42,8 @@ async function startServer() {
   registerChatRoutes(app);
   // Wiki crawl SSE streaming endpoint
   registerWikiCrawlRoute(app);
+  // Wiki export to Markdown ZIP
+  registerWikiExportRoute(app);
   // tRPC API
   app.use(
     "/api/trpc",

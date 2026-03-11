@@ -2,6 +2,8 @@ import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import {
   Link2,
   Download,
+  FileDown,
+  FileText,
   AlertCircle,
   CheckCircle2,
   Loader2,
@@ -425,6 +427,91 @@ export default function Home() {
     );
   }, [result]);
 
+  // ─── Markdown Export State ───────────────────────────────────────────────
+  const [mdExportJobId, setMdExportJobId] = useState<string | null>(null);
+  const [mdExportStatus, setMdExportStatus] = useState<"idle" | "running" | "done" | "failed">("idle");
+  const [mdExportProgress, setMdExportProgress] = useState({ done: 0, total: 0, failed: 0 });
+  const [mdExportError, setMdExportError] = useState<string | null>(null);
+  const mdPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopMdPoll = useCallback(() => {
+    if (mdPollRef.current) {
+      clearInterval(mdPollRef.current);
+      mdPollRef.current = null;
+    }
+  }, []);
+
+  const handleExportMarkdown = useCallback(async () => {
+    if (!result?.sessionId) return;
+    setMdExportStatus("running");
+    setMdExportError(null);
+    setMdExportProgress({ done: 0, total: 0, failed: 0 });
+    setMdExportJobId(null);
+
+    try {
+      const body: Record<string, string> = { sessionId: String(result.sessionId) };
+      if (authMode === "token" && userToken.trim()) body.userAccessToken = userToken.trim();
+      if (authMode === "app" && appId.trim()) body.appId = appId.trim();
+      if (authMode === "app" && appSecret.trim()) body.appSecret = appSecret.trim();
+
+      const startRes = await fetch("/api/wiki/export/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const startData = await startRes.json() as { jobId?: string; total?: number; error?: string };
+      if (!startRes.ok || !startData.jobId) {
+        throw new Error(startData.error ?? "Failed to start export");
+      }
+
+      const jobId = startData.jobId;
+      setMdExportJobId(jobId);
+      setMdExportProgress({ done: 0, total: startData.total ?? 0, failed: 0 });
+
+      // Poll status every 2 seconds
+      stopMdPoll();
+      mdPollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/wiki/export/status?jobId=${encodeURIComponent(jobId)}`);
+          const statusData = await statusRes.json() as {
+            status: string; done: number; total: number; failed: number;
+            errorMsg?: string; hasZip?: boolean;
+          };
+          setMdExportProgress({ done: statusData.done, total: statusData.total, failed: statusData.failed });
+
+          if (statusData.status === "done" && statusData.hasZip) {
+            stopMdPoll();
+            setMdExportStatus("done");
+            // Auto-download
+            const a = document.createElement("a");
+            a.href = `/api/wiki/export/download?jobId=${encodeURIComponent(jobId)}`;
+            a.click();
+          } else if (statusData.status === "failed") {
+            stopMdPoll();
+            setMdExportStatus("failed");
+            setMdExportError(statusData.errorMsg ?? "Export failed");
+          }
+        } catch (e) {
+          console.warn("[MD Export] Poll error:", e);
+        }
+      }, 2000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setMdExportStatus("failed");
+      setMdExportError(msg);
+    }
+  }, [result, authMode, userToken, appId, appSecret, stopMdPoll]);
+
+  const handleDownloadMdAgain = useCallback(() => {
+    if (!mdExportJobId) return;
+    const a = document.createElement("a");
+    a.href = `/api/wiki/export/download?jobId=${encodeURIComponent(mdExportJobId)}`;
+    a.click();
+  }, [mdExportJobId]);
+
+  // Cleanup poll on unmount
+  useEffect(() => () => stopMdPoll(), [stopMdPoll]);
+
   const hasResults = !!result && result.nodes.length > 0;
   const isLargeWiki = result && result.totalCount > 5000;
 
@@ -653,13 +740,72 @@ export default function Home() {
                 <Separator orientation="vertical" className="h-4" />
                 <span className="text-xs text-muted-foreground">Space: <code className="font-mono">{result.spaceId}</code></span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <TypeStats nodes={result.nodes} />
                 <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleExportCsv}>
                   <Download className="w-3 h-3" /> CSV
                 </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-400"
+                  onClick={handleExportMarkdown}
+                  disabled={mdExportStatus === "running"}
+                >
+                  {mdExportStatus === "running" ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <FileDown className="w-3 h-3" />
+                  )}
+                  {mdExportStatus === "running"
+                    ? `Exporting... ${mdExportProgress.done}/${mdExportProgress.total}`
+                    : mdExportStatus === "done"
+                    ? "MD (ZIP) ✓"
+                    : "MD (ZIP)"}
+                </Button>
+                {mdExportStatus === "done" && (
+                  <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs text-violet-600" onClick={handleDownloadMdAgain}>
+                    <Download className="w-3 h-3" /> Re-download
+                  </Button>
+                )}
               </div>
             </div>
+
+            {/* MD Export Progress */}
+            {mdExportStatus === "running" && (
+              <Card className="shadow-sm border-violet-200 dark:border-violet-800">
+                <CardContent className="py-3 px-4">
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="w-4 h-4 animate-spin text-violet-600 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between text-xs mb-1.5">
+                        <span className="font-medium text-violet-700 dark:text-violet-400">Exporting Markdown files...</span>
+                        <span className="text-muted-foreground">{mdExportProgress.done}/{mdExportProgress.total} docs{mdExportProgress.failed > 0 ? ` · ${mdExportProgress.failed} failed` : ""}</span>
+                      </div>
+                      <Progress
+                        value={mdExportProgress.total > 0 ? Math.round((mdExportProgress.done / mdExportProgress.total) * 100) : 0}
+                        className="h-1.5"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    <FileText className="w-3 h-3 inline mr-1" />
+                    Fetching content via Feishu Docs API (rate limit: 5 req/s). Large wikis may take several minutes. ZIP will auto-download when done.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* MD Export Error */}
+            {mdExportStatus === "failed" && mdExportError && (
+              <Alert variant="destructive" className="py-2">
+                <AlertCircle className="w-4 h-4" />
+                <AlertDescription className="text-xs ml-1">
+                  <strong>Markdown export failed:</strong> {mdExportError}
+                  <Button variant="link" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={handleExportMarkdown}>Retry</Button>
+                </AlertDescription>
+              </Alert>
+            )}
 
             {/* Large wiki warning */}
             {isLargeWiki && (

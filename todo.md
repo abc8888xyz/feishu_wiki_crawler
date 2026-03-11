@@ -99,3 +99,16 @@
 - [x] UI: hiển thị badge "Feishu" (xanh dương) hoặc "Lark" (xanh sky) khi detect được platform từ URL
 - [x] UI: cập nhật placeholder URL để hỗ trợ cả 2 domain
 - [x] UI: cập nhật hướng dẫn lấy credentials cho cả Feishu và Lark (2-column layout)
+
+## Tính năng Download Markdown (export nội dung docx) - DONE
+
+- [x] Research: Feishu Docs API - dùng /docs/v1/content?content_type=markdown (trả về MD trực tiếp, không cần export task)
+- [x] Backend: endpoint POST /api/wiki/export/start - nhận sessionId + token, bắt đầu export hàng loạt (concurrency=3, delay=800ms)
+- [x] Backend: gọi Feishu Docs API cho từng docx node, thêm frontmatter (title, url, depth)
+- [x] Backend: đóng gói tất cả .md files vào ZIP in-memory bằng archiver
+- [x] Backend: endpoint GET /api/wiki/export/status?jobId=X - poll tiến trình export
+- [x] Backend: endpoint GET /api/wiki/export/download?jobId=X - download ZIP
+- [x] UI: nút "MD (ZIP)" màu tím trong results header (bên cạnh CSV button)
+- [x] UI: progress bar hiển thị tiến trình export (X/Y docs, rate limit info)
+- [x] UI: auto-download ZIP khi export hoàn thành, có nút Re-download
+- [x] UI: hiển thị error + Retry button khi export thất bại
