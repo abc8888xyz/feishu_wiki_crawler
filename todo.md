@@ -119,3 +119,20 @@
 - [x] Fix: export route chỉ chấp nhận User Access Token, throw lỗi rõ ràng nếu dùng App Token
 - [x] Fix: UI disable nút MD (ZIP) và hiển thị warning khi authMode=app
 - [x] Fix: thêm inline warning alert giải thích lý do và hướng dẫn switch sang User Access Token
+
+## Bug Fix - MD Export với User Access Token
+
+- [ ] Debug lỗi MD export khi dùng User Access Token
+- [ ] Fix lỗi
+
+## Tính năng Export Docx và PDF
+
+- [x] Research: Feishu Drive Export API (/drive/v1/export_tasks) - tạo export task, poll status, download file
+- [x] Backend: tạo wikiDocExportRoute.ts với 3-step async flow (create → poll → download → zip)
+- [x] Backend: hỗ trợ cả docx và doc node types, concurrency=2, poll interval=2s, timeout=120s
+- [x] Backend: đăng ký route /api/wiki/export-doc/start|status|download trong server index.ts
+- [x] UI: thêm nút Docx (ZIP) màu xanh và PDF (ZIP) màu đỏ bên cạnh MD (ZIP)
+- [x] UI: progress tracking riêng cho từng format (running/done/failed states)
+- [x] UI: warning khi authMode=app (cần User Access Token)
+- [x] UI: auto-download ZIP khi xong, nút Re-download
+- [x] Tests: vitest cho sanitizeFilename, resolveAccessToken, isValidFormat, deduplication (21 tests pass)

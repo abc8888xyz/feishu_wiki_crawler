@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import {
   Link2,
   Download,
@@ -25,6 +25,8 @@ import {
   Database,
   Scissors,
   Globe,
+  FileType,
+  FileType2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -55,6 +57,18 @@ function exportToCsv(nodes: WikiNode[], filename = "feishu_wiki_links.csv") {
   ]);
   const csv = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
   const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── JSON Export ──────────────────────────────────────────────────────────────
+function exportToJson(nodes: WikiNode[], filename = "feishu_wiki_nodes.json") {
+  const json = JSON.stringify(nodes, null, 2);
+  const blob = new Blob([json], { type: "application/json;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -144,6 +158,15 @@ function CredentialsGuide() {
               </ol>
             </div>
             <p className="text-amber-600 dark:text-amber-400 mt-1.5">⚠ User tokens expire after 2 hours. If the crawl pauses mid-way, get a new token and click <strong>Resume</strong>.</p>
+          </div>
+          <Separator />
+          <div className="bg-violet-50 dark:bg-violet-900/10 rounded-md p-2.5 border border-violet-200 dark:border-violet-800">
+            <p className="font-semibold text-violet-700 dark:text-violet-400 mb-1">Required scopes for MD / Docx / PDF export:</p>
+            <ul className="space-y-0.5 text-muted-foreground">
+              <li>• <code className="bg-muted px-1 rounded">docs:document.content:read</code> — for Markdown export</li>
+              <li>• <code className="bg-muted px-1 rounded">drive:drive:readonly</code> or <code className="bg-muted px-1 rounded">drive:export</code> — for Docx/PDF export</li>
+            </ul>
+            <p className="text-xs text-violet-600 dark:text-violet-400 mt-1.5">All export formats require User Access Token (not App credentials).</p>
           </div>
         </div>
       )}
@@ -374,6 +397,51 @@ function useSseCrawl() {
   return { crawl, resume, abort, isLoading, progressCount, progressPending, progressMessage, error, result, paused, startTime };
 }
 
+// ─── Generic Export Progress Card ────────────────────────────────────────────
+function ExportProgressCard({
+  label,
+  color,
+  done,
+  total,
+  failed,
+  description,
+}: {
+  label: string;
+  color: string;
+  done: number;
+  total: number;
+  failed: number;
+  description: string;
+}) {
+  return (
+    <Card className={cn("shadow-sm", color === "violet" && "border-violet-200 dark:border-violet-800", color === "blue" && "border-blue-200 dark:border-blue-800", color === "rose" && "border-rose-200 dark:border-rose-800")}>
+      <CardContent className="py-3 px-4">
+        <div className="flex items-center gap-3">
+          <Loader2 className={cn("w-4 h-4 animate-spin shrink-0", color === "violet" && "text-violet-600", color === "blue" && "text-blue-600", color === "rose" && "text-rose-600")} />
+          <div className="flex-1 min-w-0">
+            <div className="flex justify-between text-xs mb-1.5">
+              <span className={cn("font-medium", color === "violet" && "text-violet-700 dark:text-violet-400", color === "blue" && "text-blue-700 dark:text-blue-400", color === "rose" && "text-rose-700 dark:text-rose-400")}>
+                Exporting {label} files...
+              </span>
+              <span className="text-muted-foreground">
+                {done}/{total} docs{failed > 0 ? ` · ${failed} failed` : ""}
+              </span>
+            </div>
+            <Progress
+              value={total > 0 ? Math.round((done / total) * 100) : 0}
+              className="h-1.5"
+            />
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">
+          <FileText className="w-3 h-3 inline mr-1" />
+          {description}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function Home() {
   const [wikiUrl, setWikiUrl] = useState("");
@@ -424,6 +492,14 @@ export default function Home() {
     exportToCsv(
       result.nodes,
       `feishu_wiki_${result.spaceId || "export"}_${new Date().toISOString().slice(0, 10)}.csv`
+    );
+  }, [result]);
+
+  const handleExportJson = useCallback(() => {
+    if (!result?.nodes.length) return;
+    exportToJson(
+      result.nodes,
+      `feishu_wiki_${result.spaceId || "export"}_${new Date().toISOString().slice(0, 10)}.json`
     );
   }, [result]);
 
@@ -512,8 +588,108 @@ export default function Home() {
   // Cleanup poll on unmount
   useEffect(() => () => stopMdPoll(), [stopMdPoll]);
 
+  // ─── Docx/PDF Export State ───────────────────────────────────────────────
+  type DocExportFormat = "docx" | "pdf";
+  interface DocExportState {
+    jobId: string | null;
+    status: "idle" | "running" | "done" | "failed";
+    progress: { done: number; total: number; failed: number };
+    error: string | null;
+  }
+
+  const [docxExport, setDocxExport] = useState<DocExportState>({
+    jobId: null, status: "idle", progress: { done: 0, total: 0, failed: 0 }, error: null,
+  });
+  const [pdfExport, setPdfExport] = useState<DocExportState>({
+    jobId: null, status: "idle", progress: { done: 0, total: 0, failed: 0 }, error: null,
+  });
+
+  const docxPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pdfPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopDocxPoll = useCallback(() => {
+    if (docxPollRef.current) { clearInterval(docxPollRef.current); docxPollRef.current = null; }
+  }, []);
+  const stopPdfPoll = useCallback(() => {
+    if (pdfPollRef.current) { clearInterval(pdfPollRef.current); pdfPollRef.current = null; }
+  }, []);
+
+  useEffect(() => () => { stopDocxPoll(); stopPdfPoll(); }, [stopDocxPoll, stopPdfPoll]);
+
+  const handleExportDoc = useCallback(async (format: DocExportFormat) => {
+    if (!result?.sessionId) return;
+
+    const setExport = format === "docx" ? setDocxExport : setPdfExport;
+    const stopPoll = format === "docx" ? stopDocxPoll : stopPdfPoll;
+    const pollRef = format === "docx" ? docxPollRef : pdfPollRef;
+
+    setExport({ jobId: null, status: "running", progress: { done: 0, total: 0, failed: 0 }, error: null });
+
+    try {
+      const body: Record<string, string> = {
+        sessionId: String(result.sessionId),
+        format,
+      };
+      if (authMode === "token" && userToken.trim()) body.userAccessToken = userToken.trim();
+      if (authMode === "app" && appId.trim()) body.appId = appId.trim();
+      if (authMode === "app" && appSecret.trim()) body.appSecret = appSecret.trim();
+
+      const startRes = await fetch("/api/wiki/export-doc/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const startData = await startRes.json() as { jobId?: string; total?: number; error?: string };
+      if (!startRes.ok || !startData.jobId) {
+        throw new Error(startData.error ?? "Failed to start export");
+      }
+
+      const jobId = startData.jobId;
+      setExport(prev => ({ ...prev, jobId, progress: { done: 0, total: startData.total ?? 0, failed: 0 } }));
+
+      // Poll status every 3 seconds (export tasks take longer than MD)
+      stopPoll();
+      pollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/wiki/export-doc/status?jobId=${encodeURIComponent(jobId)}`);
+          const statusData = await statusRes.json() as {
+            status: string; done: number; total: number; failed: number;
+            errorMsg?: string; hasZip?: boolean;
+          };
+          setExport(prev => ({ ...prev, progress: { done: statusData.done, total: statusData.total, failed: statusData.failed } }));
+
+          if (statusData.status === "done" && statusData.hasZip) {
+            stopPoll();
+            setExport(prev => ({ ...prev, status: "done" }));
+            // Auto-download
+            const a = document.createElement("a");
+            a.href = `/api/wiki/export-doc/download?jobId=${encodeURIComponent(jobId)}`;
+            a.click();
+          } else if (statusData.status === "failed") {
+            stopPoll();
+            setExport(prev => ({ ...prev, status: "failed", error: statusData.errorMsg ?? "Export failed" }));
+          }
+        } catch (e) {
+          console.warn(`[${format.toUpperCase()} Export] Poll error:`, e);
+        }
+      }, 3000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setExport(prev => ({ ...prev, status: "failed", error: msg }));
+    }
+  }, [result, authMode, userToken, appId, appSecret, stopDocxPoll, stopPdfPoll, docxPollRef, pdfPollRef]);
+
+  const handleDownloadDocAgain = useCallback((format: DocExportFormat) => {
+    const jobId = format === "docx" ? docxExport.jobId : pdfExport.jobId;
+    if (!jobId) return;
+    const a = document.createElement("a");
+    a.href = `/api/wiki/export-doc/download?jobId=${encodeURIComponent(jobId)}`;
+    a.click();
+  }, [docxExport.jobId, pdfExport.jobId]);
+
   const hasResults = !!result && result.nodes.length > 0;
   const isLargeWiki = result && result.totalCount > 5000;
+  const isExportDisabled = authMode === "app";
 
   // Auto-switch to table tab when wiki is large
   useEffect(() => {
@@ -535,9 +711,14 @@ export default function Home() {
             </div>
           </div>
           {hasResults && (
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleExportCsv}>
-              <Download className="w-3.5 h-3.5" /> Export CSV
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleExportCsv}>
+                <Download className="w-3.5 h-3.5" /> CSV
+              </Button>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleExportJson}>
+                <FileDown className="w-3.5 h-3.5" /> JSON
+              </Button>
+            </div>
           )}
         </div>
       </header>
@@ -740,18 +921,29 @@ export default function Home() {
                 <Separator orientation="vertical" className="h-4" />
                 <span className="text-xs text-muted-foreground">Space: <code className="font-mono">{result.spaceId}</code></span>
               </div>
+
+              {/* Export buttons */}
               <div className="flex items-center gap-2 flex-wrap">
                 <TypeStats nodes={result.nodes} />
+
+                {/* CSV */}
                 <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleExportCsv}>
                   <Download className="w-3 h-3" /> CSV
                 </Button>
+
+                {/* JSON */}
+                <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleExportJson}>
+                  <FileDown className="w-3 h-3" /> JSON
+                </Button>
+
+                {/* MD (ZIP) */}
                 <Button
                   variant="outline"
                   size="sm"
                   className="h-7 gap-1.5 text-xs border-violet-300 text-violet-700 hover:bg-violet-50 dark:border-violet-700 dark:text-violet-400 disabled:opacity-50"
-                  onClick={authMode === "app" ? undefined : handleExportMarkdown}
-                  disabled={mdExportStatus === "running" || authMode === "app"}
-                  title={authMode === "app" ? "MD export requires User Access Token (App credentials lack docs:document.content:read scope). Switch to User Access Token tab." : "Export all docx pages as Markdown ZIP"}
+                  onClick={isExportDisabled ? undefined : handleExportMarkdown}
+                  disabled={mdExportStatus === "running" || isExportDisabled}
+                  title={isExportDisabled ? "MD export requires User Access Token. Switch to User Access Token tab." : "Export all docx pages as Markdown ZIP"}
                 >
                   {mdExportStatus === "running" ? (
                     <Loader2 className="w-3 h-3 animate-spin" />
@@ -759,54 +951,121 @@ export default function Home() {
                     <FileDown className="w-3 h-3" />
                   )}
                   {mdExportStatus === "running"
-                    ? `Exporting... ${mdExportProgress.done}/${mdExportProgress.total}`
+                    ? `MD... ${mdExportProgress.done}/${mdExportProgress.total}`
                     : mdExportStatus === "done"
-                    ? "MD (ZIP) ✓"
-                    : authMode === "app"
-                    ? "MD (ZIP) ⚠"
+                    ? "MD ✓"
+                    : isExportDisabled
+                    ? "MD ⚠"
                     : "MD (ZIP)"}
                 </Button>
                 {mdExportStatus === "done" && (
                   <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs text-violet-600" onClick={handleDownloadMdAgain}>
-                    <Download className="w-3 h-3" /> Re-download
+                    <Download className="w-3 h-3" /> Re-DL
+                  </Button>
+                )}
+
+                {/* Docx (ZIP) */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-700 dark:text-blue-400 disabled:opacity-50"
+                  onClick={isExportDisabled ? undefined : () => handleExportDoc("docx")}
+                  disabled={docxExport.status === "running" || isExportDisabled}
+                  title={isExportDisabled ? "Docx export requires User Access Token." : "Export all docx/doc pages as Word files in ZIP"}
+                >
+                  {docxExport.status === "running" ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <FileType className="w-3 h-3" />
+                  )}
+                  {docxExport.status === "running"
+                    ? `Docx... ${docxExport.progress.done}/${docxExport.progress.total}`
+                    : docxExport.status === "done"
+                    ? "Docx ✓"
+                    : isExportDisabled
+                    ? "Docx ⚠"
+                    : "Docx (ZIP)"}
+                </Button>
+                {docxExport.status === "done" && (
+                  <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs text-blue-600" onClick={() => handleDownloadDocAgain("docx")}>
+                    <Download className="w-3 h-3" /> Re-DL
+                  </Button>
+                )}
+
+                {/* PDF (ZIP) */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-700 dark:text-rose-400 disabled:opacity-50"
+                  onClick={isExportDisabled ? undefined : () => handleExportDoc("pdf")}
+                  disabled={pdfExport.status === "running" || isExportDisabled}
+                  title={isExportDisabled ? "PDF export requires User Access Token." : "Export all docx/doc pages as PDF files in ZIP"}
+                >
+                  {pdfExport.status === "running" ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <FileType2 className="w-3 h-3" />
+                  )}
+                  {pdfExport.status === "running"
+                    ? `PDF... ${pdfExport.progress.done}/${pdfExport.progress.total}`
+                    : pdfExport.status === "done"
+                    ? "PDF ✓"
+                    : isExportDisabled
+                    ? "PDF ⚠"
+                    : "PDF (ZIP)"}
+                </Button>
+                {pdfExport.status === "done" && (
+                  <Button variant="ghost" size="sm" className="h-7 gap-1 text-xs text-rose-600" onClick={() => handleDownloadDocAgain("pdf")}>
+                    <Download className="w-3 h-3" /> Re-DL
                   </Button>
                 )}
               </div>
             </div>
 
-            {/* MD Export - App mode warning */}
-            {authMode === "app" && result && (
+            {/* Export requires User Token warning */}
+            {isExportDisabled && result && (
               <Alert className="py-2 border-amber-200 bg-amber-50 dark:bg-amber-900/10">
                 <AlertTriangle className="w-4 h-4 text-amber-600" />
                 <AlertDescription className="text-xs text-amber-700 dark:text-amber-400 ml-1">
-                  <strong>MD export requires User Access Token.</strong> App credentials (tenant token) lack the <code className="font-mono bg-amber-100 dark:bg-amber-900/30 px-1 rounded">docs:document.content:read</code> scope. Switch to the <strong>User Access Token</strong> tab above and enter a valid token to enable MD export.
+                  <strong>MD / Docx / PDF export requires User Access Token.</strong> App credentials (tenant token) lack the required export scopes. Switch to the <strong>User Access Token</strong> tab above and enter a valid token to enable all export formats.
                 </AlertDescription>
               </Alert>
             )}
 
             {/* MD Export Progress */}
             {mdExportStatus === "running" && (
-              <Card className="shadow-sm border-violet-200 dark:border-violet-800">
-                <CardContent className="py-3 px-4">
-                  <div className="flex items-center gap-3">
-                    <Loader2 className="w-4 h-4 animate-spin text-violet-600 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between text-xs mb-1.5">
-                        <span className="font-medium text-violet-700 dark:text-violet-400">Exporting Markdown files...</span>
-                        <span className="text-muted-foreground">{mdExportProgress.done}/{mdExportProgress.total} docs{mdExportProgress.failed > 0 ? ` · ${mdExportProgress.failed} failed` : ""}</span>
-                      </div>
-                      <Progress
-                        value={mdExportProgress.total > 0 ? Math.round((mdExportProgress.done / mdExportProgress.total) * 100) : 0}
-                        className="h-1.5"
-                      />
-                    </div>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-2">
-                    <FileText className="w-3 h-3 inline mr-1" />
-                    Fetching content via Feishu Docs API (rate limit: 5 req/s). Large wikis may take several minutes. ZIP will auto-download when done.
-                  </p>
-                </CardContent>
-              </Card>
+              <ExportProgressCard
+                label="Markdown"
+                color="violet"
+                done={mdExportProgress.done}
+                total={mdExportProgress.total}
+                failed={mdExportProgress.failed}
+                description="Fetching content via Feishu Docs API (rate limit: 5 req/s). Large wikis may take several minutes."
+              />
+            )}
+
+            {/* Docx Export Progress */}
+            {docxExport.status === "running" && (
+              <ExportProgressCard
+                label="Docx"
+                color="blue"
+                done={docxExport.progress.done}
+                total={docxExport.progress.total}
+                failed={docxExport.progress.failed}
+                description="Exporting via Feishu Drive Export API (async tasks). Each document takes 2-10s to process."
+              />
+            )}
+
+            {/* PDF Export Progress */}
+            {pdfExport.status === "running" && (
+              <ExportProgressCard
+                label="PDF"
+                color="rose"
+                done={pdfExport.progress.done}
+                total={pdfExport.progress.total}
+                failed={pdfExport.progress.failed}
+                description="Exporting via Feishu Drive Export API (async tasks). PDF export may take longer for large documents."
+              />
             )}
 
             {/* MD Export Error */}
@@ -816,6 +1075,28 @@ export default function Home() {
                 <AlertDescription className="text-xs ml-1">
                   <strong>Markdown export failed:</strong> {mdExportError}
                   <Button variant="link" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={handleExportMarkdown}>Retry</Button>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Docx Export Error */}
+            {docxExport.status === "failed" && docxExport.error && (
+              <Alert variant="destructive" className="py-2">
+                <AlertCircle className="w-4 h-4" />
+                <AlertDescription className="text-xs ml-1">
+                  <strong>Docx export failed:</strong> {docxExport.error}
+                  <Button variant="link" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={() => handleExportDoc("docx")}>Retry</Button>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* PDF Export Error */}
+            {pdfExport.status === "failed" && pdfExport.error && (
+              <Alert variant="destructive" className="py-2">
+                <AlertCircle className="w-4 h-4" />
+                <AlertDescription className="text-xs ml-1">
+                  <strong>PDF export failed:</strong> {pdfExport.error}
+                  <Button variant="link" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={() => handleExportDoc("pdf")}>Retry</Button>
                 </AlertDescription>
               </Alert>
             )}
@@ -883,8 +1164,7 @@ export default function Home() {
                         userAccessToken: authMode === "token" ? userToken.trim() || undefined : undefined,
                         appId: authMode === "app" ? appId.trim() || undefined : undefined,
                         appSecret: authMode === "app" ? appSecret.trim() || undefined : undefined,
-                        apiBase: result.domain?.includes("larksuite.com") ? "https://open.larksuite.com" : "https://open.feishu.cn",
-                      } satisfies WikiTableAuthInfo}
+                      } as WikiTableAuthInfo}
                     />
                   </CardContent>
                 </Card>
@@ -912,9 +1192,15 @@ export default function Home() {
                 <code className="font-mono">https://waytoagi.feishu.cn/wiki/QPe5w5g7UisbEkkow8XcDmOpn8e</code>
                 <code className="font-mono">https://company.larksuite.com/wiki/SPACE_TOKEN</code>
               </div>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground bg-green-50 dark:bg-green-900/10 rounded-lg px-4 py-2.5 border border-green-200 dark:border-green-800">
-                <Zap className="w-3.5 h-3.5 text-green-600 shrink-0" />
-                <span><strong className="text-green-700 dark:text-green-400">Zero node loss:</strong> Persistent queue in DB — resume if token expires mid-crawl</span>
+              <div className="flex items-center gap-4 flex-wrap justify-center">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-green-50 dark:bg-green-900/10 rounded-lg px-4 py-2.5 border border-green-200 dark:border-green-800">
+                  <Zap className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                  <span><strong className="text-green-700 dark:text-green-400">Zero node loss:</strong> Persistent queue in DB — resume if token expires mid-crawl</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-blue-50 dark:bg-blue-900/10 rounded-lg px-4 py-2.5 border border-blue-200 dark:border-blue-800">
+                  <FileDown className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                  <span><strong className="text-blue-700 dark:text-blue-400">4 export formats:</strong> CSV, JSON, Markdown, Docx, PDF (ZIP)</span>
+                </div>
               </div>
             </CardContent>
           </Card>
