@@ -68,15 +68,15 @@
 - [x] Fix: rate limit (code 99991400) - giảm concurrency xuống 5, tăng maxRetries lên 5, backoff 2s/4s/8s/16s/32s cho rate limit errors
 
 ## Cơ chế crawl không bỏ sót (Persistent Queue)
-- [ ] DB schema: bảng crawl_sessions (id, space_id, domain, status, total_nodes, skipped_nodes, created_at, updated_at)
-- [ ] DB schema: bảng crawl_queue (id, session_id, parent_token, fetch_space_id, depth, status: pending/done/failed, retry_count, error_msg)
-- [ ] DB schema: bảng crawl_nodes (id, session_id, node_token, title, url, obj_type, depth, parent_token, raw_json)
-- [ ] Backend: persistent BFS engine - lưu queue vào DB, xử lý từng batch, không bỏ sót khi rate limit
-- [ ] Backend: rate limit handler - khi gặp 99991400, đưa node vào pending queue với delay, không skip
-- [ ] Backend: SSE endpoint stream progress từ DB thay vì in-memory
-- [ ] Backend: resume API - tiếp tục crawl session đang dở với token mới
-- [ ] Frontend: hiển thị "Resume" button khi session bị dừng giữa chừng
-- [ ] Frontend: hiển thị số nodes pending/done/failed trong progress bar
+- [x] DB schema: bảng crawl_sessions (id, space_id, domain, status, total_nodes, skipped_nodes, created_at, updated_at)
+- [x] DB schema: bảng crawl_queue (id, session_id, parent_token, fetch_space_id, depth, status: pending/done/failed, retry_count, error_msg)
+- [x] DB schema: bảng crawl_nodes (id, session_id, node_token, title, url, obj_type, depth, parent_token, raw_json)
+- [x] Backend: persistent BFS engine - lưu queue vào DB, xử lý từng batch, không bỏ sót khi rate limit
+- [x] Backend: rate limit handler - khi gặp 99991400, đưa node vào pending queue với delay, không skip
+- [x] Backend: SSE endpoint stream progress từ DB thay vì in-memory
+- [x] Backend: resume API - tiếp tục crawl session đang dở với token mới
+- [x] Frontend: hiển thị "Resume" button khi session bị dừng giữa chừng
+- [x] Frontend: hiển thị số nodes pending/done/failed trong progress bar
 - [ ] Test: crawl toàn bộ waytoagi wiki và verify 0 nodes bị skip do rate limit
 
 ## Tính năng Crawl Subtree (chỉ cào con của node được chọn)
@@ -89,7 +89,7 @@
 
 ## Xóa chức năng dịch title
 
-- [ ] Xóa toàn bộ code liên quan đến dịch title (UI toggle, backend API call, column trong table)
+- [x] Xóa toàn bộ code liên quan đến dịch title (UI toggle, backend API call, column trong table) - đã xác nhận không có code dịch title trong codebase
 
 ## Hỗ trợ Larksuite (larksuite.com)
 
