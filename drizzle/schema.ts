@@ -27,6 +27,7 @@ export const crawlSessions = mysqlTable("crawl_sessions", {
   id: int("id").autoincrement().primaryKey(),
   spaceId: varchar("spaceId", { length: 64 }).notNull(),
   domain: varchar("domain", { length: 256 }).notNull(),
+  apiBase: varchar("apiBase", { length: 256 }).default("https://open.feishu.cn").notNull(),
   status: mysqlEnum("status", ["running", "paused", "done", "failed"]).default("running").notNull(),
   totalNodes: int("totalNodes").default(0).notNull(),
   pendingQueue: int("pendingQueue").default(0).notNull(),

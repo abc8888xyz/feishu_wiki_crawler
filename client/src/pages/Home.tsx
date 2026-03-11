@@ -96,30 +96,51 @@ function CredentialsGuide() {
       >
         <span className="flex items-center gap-1.5">
           <Info className="w-3.5 h-3.5 text-blue-500" />
-          How to get Feishu App credentials
+          How to get Feishu / Lark credentials
         </span>
         {open ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
       </button>
       {open && (
         <div className="px-4 py-3 space-y-3 text-xs bg-blue-50/40 dark:bg-blue-900/10 border-t border-border">
-          <div>
-            <p className="font-semibold text-foreground mb-1.5">Option A — App Credentials (recommended)</p>
-            <ol className="space-y-1 text-muted-foreground list-decimal list-inside">
-              <li>Go to <a href="https://open.feishu.cn/app" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline inline-flex items-center gap-0.5">open.feishu.cn/app <ExternalLink className="w-2.5 h-2.5" /></a> and create a new app</li>
-              <li>Under <strong className="text-foreground">Permissions &amp; Scopes</strong>, enable: <code className="bg-muted px-1 rounded">wiki:wiki:readonly</code></li>
-              <li>Under <strong className="text-foreground">Version Management</strong>, publish the app</li>
-              <li>Copy the <strong className="text-foreground">App ID</strong> and <strong className="text-foreground">App Secret</strong> from the app credentials page</li>
-            </ol>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="font-semibold text-foreground mb-1.5 flex items-center gap-1">
+                <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">Feishu</span>
+                App Credentials
+              </p>
+              <ol className="space-y-1 text-muted-foreground list-decimal list-inside">
+                <li>Go to <a href="https://open.feishu.cn/app" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline inline-flex items-center gap-0.5">open.feishu.cn/app <ExternalLink className="w-2.5 h-2.5" /></a></li>
+                <li>Enable: <code className="bg-muted px-1 rounded">wiki:wiki:readonly</code></li>
+                <li>Publish the app, then copy App ID &amp; Secret</li>
+              </ol>
+            </div>
+            <div>
+              <p className="font-semibold text-foreground mb-1.5 flex items-center gap-1">
+                <span className="text-[10px] bg-sky-100 text-sky-700 px-1.5 py-0.5 rounded font-bold">Lark</span>
+                App Credentials
+              </p>
+              <ol className="space-y-1 text-muted-foreground list-decimal list-inside">
+                <li>Go to <a href="https://open.larksuite.com/app" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline inline-flex items-center gap-0.5">open.larksuite.com/app <ExternalLink className="w-2.5 h-2.5" /></a></li>
+                <li>Enable: <code className="bg-muted px-1 rounded">wiki:wiki:readonly</code></li>
+                <li>Publish the app, then copy App ID &amp; Secret</li>
+              </ol>
+            </div>
           </div>
           <Separator />
           <div>
-            <p className="font-semibold text-foreground mb-1.5">Option B — User Access Token (quick test, expires in 2h)</p>
-            <ol className="space-y-1 text-muted-foreground list-decimal list-inside">
-              <li>Go to <a href="https://open.feishu.cn/api-explorer" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline inline-flex items-center gap-0.5">Feishu API Explorer <ExternalLink className="w-2.5 h-2.5" /></a></li>
-              <li>Log in with your Feishu account and select your app</li>
-              <li>Click <strong className="text-foreground">Get Token</strong> → choose <strong className="text-foreground">user_access_token</strong></li>
-              <li>Authorize and copy the token shown</li>
-            </ol>
+            <p className="font-semibold text-foreground mb-1.5">User Access Token (quick test, expires in 2h)</p>
+            <div className="grid grid-cols-2 gap-4">
+              <ol className="space-y-1 text-muted-foreground list-decimal list-inside">
+                <li className="font-medium text-foreground">For Feishu:</li>
+                <li>Go to <a href="https://open.feishu.cn/api-explorer" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline inline-flex items-center gap-0.5">Feishu API Explorer <ExternalLink className="w-2.5 h-2.5" /></a></li>
+                <li>Click <strong className="text-foreground">Get Token</strong> → <strong className="text-foreground">user_access_token</strong></li>
+              </ol>
+              <ol className="space-y-1 text-muted-foreground list-decimal list-inside">
+                <li className="font-medium text-foreground">For Lark:</li>
+                <li>Go to <a href="https://open.larksuite.com/api-explorer" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline inline-flex items-center gap-0.5">Lark API Explorer <ExternalLink className="w-2.5 h-2.5" /></a></li>
+                <li>Click <strong className="text-foreground">Get Token</strong> → <strong className="text-foreground">user_access_token</strong></li>
+              </ol>
+            </div>
             <p className="text-amber-600 dark:text-amber-400 mt-1.5">⚠ User tokens expire after 2 hours. If the crawl pauses mid-way, get a new token and click <strong>Resume</strong>.</p>
           </div>
         </div>
@@ -449,13 +470,27 @@ export default function Home() {
           <CardContent className="space-y-4">
             {/* URL Input */}
             <div className="flex gap-2">
-              <Input
-                placeholder="https://xxx.feishu.cn/wiki/TOKEN"
-                value={wikiUrl}
-                onChange={e => setWikiUrl(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && handleCrawl()}
-                className="h-9 text-sm font-mono"
-              />
+              <div className="relative flex-1">
+                <Input
+                  placeholder="https://xxx.feishu.cn/wiki/TOKEN or https://xxx.larksuite.com/wiki/TOKEN"
+                  value={wikiUrl}
+                  onChange={e => setWikiUrl(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleCrawl()}
+                  className="h-9 text-sm font-mono pr-24"
+                />
+                {wikiUrl.trim() && (
+                  <span className={cn(
+                    "absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-semibold px-1.5 py-0.5 rounded",
+                    wikiUrl.includes("larksuite.com")
+                      ? "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300"
+                      : wikiUrl.includes("feishu.cn")
+                      ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                      : "bg-muted text-muted-foreground"
+                  )}>
+                    {wikiUrl.includes("larksuite.com") ? "Lark" : wikiUrl.includes("feishu.cn") ? "Feishu" : "?"}
+                  </span>
+                )}
+              </div>
               {isLoading ? (
                 <Button variant="destructive" onClick={abort} className="h-9 px-4 gap-2 shrink-0">
                   <AlertCircle className="w-3.5 h-3.5" />Stop

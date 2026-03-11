@@ -52,14 +52,15 @@ export type ProgressCallback = (progress: CrawlProgress) => void;
 export async function createCrawlSession(
   spaceId: string,
   domain: string,
-  rootNodeToken?: string
+  rootNodeToken?: string,
+  apiBase = "https://open.feishu.cn"
 ): Promise<number> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   const [result] = await db
     .insert(crawlSessions)
-    .values({ spaceId, domain, status: "running", totalNodes: 0, pendingQueue: 1, skippedNodes: 0 });
+    .values({ spaceId, domain, apiBase, status: "running", totalNodes: 0, pendingQueue: 1, skippedNodes: 0 });
 
   const sessionId = (result as { insertId: number }).insertId;
 
@@ -147,7 +148,7 @@ export async function runCrawlSession(
     .set({ status: "running", errorMsg: null })
     .where(eq(crawlSessions.id, sessionId));
 
-  const { spaceId, domain } = session;
+  const { spaceId, domain, apiBase } = session as CrawlSession & { apiBase: string };
 
   try {
     while (true) {
@@ -163,7 +164,7 @@ export async function runCrawlSession(
       // Process batch in parallel
       await Promise.all(
         batch.map((item) =>
-          processQueueItem(item, accessToken, sessionId, spaceId, domain, onProgress)
+          processQueueItem(item, accessToken, sessionId, spaceId, domain, apiBase, onProgress)
         )
       );
 
@@ -246,13 +247,14 @@ async function processQueueItem(
   sessionId: number,
   _spaceId: string,
   domain: string,
+  apiBase = "https://open.feishu.cn",
   _onProgress?: ProgressCallback
 ): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
 
   try {
-    const items = await fetchAllAtLevel(item.fetchSpaceId, accessToken, item.parentToken ?? undefined);
+    const items = await fetchAllAtLevel(item.fetchSpaceId, accessToken, item.parentToken ?? undefined, apiBase);
 
     // Persist all discovered nodes
     if (items.length > 0) {

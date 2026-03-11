@@ -1,0 +1,1 @@
+ALTER TABLE `crawl_sessions` ADD `apiBase` varchar(256) DEFAULT 'https://open.feishu.cn' NOT NULL;

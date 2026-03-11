@@ -65,12 +65,30 @@ const NODE_SKIP_CODES = new Set([230002, 230003, 230004, 1254043, 1254044]);
 const RATE_LIMIT_CODES = new Set([99991400, 99991401, 429]);
 
 /**
- * Parse Feishu wiki URL to extract space_id and node_token
+ * Detect platform (Feishu or Lark) from hostname
+ */
+export function detectPlatform(hostname: string): "feishu" | "lark" {
+  return hostname.includes("larksuite.com") ? "lark" : "feishu";
+}
+
+/**
+ * Get the Open API base URL for a given platform
+ */
+export function getApiBaseUrl(platform: "feishu" | "lark"): string {
+  return platform === "lark"
+    ? "https://open.larksuite.com"
+    : "https://open.feishu.cn";
+}
+
+/**
+ * Parse Feishu/Lark wiki URL to extract domain, token, and platform
  */
 export function parseFeishuWikiUrl(url: string): {
   domain: string;
   token: string;
   isValid: boolean;
+  platform: "feishu" | "lark";
+  apiBase: string;
 } {
   try {
     const parsed = new URL(url);
@@ -78,21 +96,24 @@ export function parseFeishuWikiUrl(url: string): {
 
     const isFeishu = hostname.includes("feishu.cn") || hostname.includes("larksuite.com");
     if (!isFeishu) {
-      return { domain: "", token: "", isValid: false };
+      return { domain: "", token: "", isValid: false, platform: "feishu", apiBase: "" };
     }
 
     const pathMatch = parsed.pathname.match(/\/wiki\/([A-Za-z0-9_-]+)/);
     if (!pathMatch) {
-      return { domain: "", token: "", isValid: false };
+      return { domain: "", token: "", isValid: false, platform: "feishu", apiBase: "" };
     }
 
+    const platform = detectPlatform(hostname);
     return {
       domain: `https://${hostname}`,
       token: pathMatch[1],
       isValid: true,
+      platform,
+      apiBase: getApiBaseUrl(platform),
     };
   } catch {
-    return { domain: "", token: "", isValid: false };
+    return { domain: "", token: "", isValid: false, platform: "feishu", apiBase: "" };
   }
 }
 
@@ -101,10 +122,11 @@ export function parseFeishuWikiUrl(url: string): {
  */
 export async function getTenantAccessToken(
   appId: string,
-  appSecret: string
+  appSecret: string,
+  apiBase = "https://open.feishu.cn"
 ): Promise<string> {
   const response = await fetch(
-    "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
+    `${apiBase}/open-apis/auth/v3/tenant_access_token/internal`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -124,9 +146,10 @@ export async function getTenantAccessToken(
  */
 export async function getWikiNodeInfo(
   nodeToken: string,
-  accessToken: string
+  accessToken: string,
+  apiBase = "https://open.feishu.cn"
 ): Promise<{ space_id: string; node_token: string; title: string; obj_type: string } | null> {
-  const url = `https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node?token=${nodeToken}`;
+  const url = `${apiBase}/open-apis/wiki/v2/spaces/get_node?token=${nodeToken}`;
 
   const response = await fetch(url, {
     headers: {
@@ -151,7 +174,8 @@ export async function getWikiNodeInfo(
 export async function fetchAllAtLevel(
   spaceId: string,
   accessToken: string,
-  parentNodeToken?: string
+  parentNodeToken?: string,
+  apiBase = "https://open.feishu.cn"
 ): Promise<FeishuNode[]> {
   const items: FeishuNode[] = [];
   let pageToken: string | undefined;
@@ -162,7 +186,7 @@ export async function fetchAllAtLevel(
     if (pageToken) params.set("page_token", pageToken);
     if (parentNodeToken) params.set("parent_node_token", parentNodeToken);
 
-    const url = `https://open.feishu.cn/open-apis/wiki/v2/spaces/${spaceId}/nodes?${params.toString()}`;
+    const url = `${apiBase}/open-apis/wiki/v2/spaces/${spaceId}/nodes?${params.toString()}`;
 
     const response = await fetch(url, {
       headers: {
@@ -236,12 +260,13 @@ async function fetchWithRetry(
   spaceId: string,
   accessToken: string,
   parentNodeToken: string | undefined,
-  maxRetries = 5
+  maxRetries = 5,
+  apiBase = "https://open.feishu.cn"
 ): Promise<FeishuNode[]> {
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await fetchAllAtLevel(spaceId, accessToken, parentNodeToken);
+      return await fetchAllAtLevel(spaceId, accessToken, parentNodeToken, apiBase);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       // Token errors abort immediately — no retry
@@ -281,7 +306,8 @@ export async function fetchAllNodes(
   domain: string,
   rootNodeToken?: string,
   _depth: number = 0,
-  onProgress?: (count: number) => void
+  onProgress?: (count: number) => void,
+  apiBase = "https://open.feishu.cn"
 ): Promise<FeishuNode[]> {
   // Concurrency: 5 parallel requests (balanced between speed and rate limits)
   // Feishu rate limit: ~10 req/s per token; 5 concurrent + retry handles bursts well
@@ -299,7 +325,7 @@ export async function fetchAllNodes(
       currentLevel.map(({ parentToken, fetchSpaceId, depth }) =>
         limit(async () => {
           try {
-            const items = await fetchWithRetry(fetchSpaceId, accessToken, parentToken);
+            const items = await fetchWithRetry(fetchSpaceId, accessToken, parentToken, 5, apiBase);
             return items.map((node) => ({
               ...node,
               depth,

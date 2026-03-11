@@ -15,6 +15,13 @@
       "when": 1773118355264,
       "tag": "0001_medical_night_nurse",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1773198197316,
+      "tag": "0002_curly_madelyne_pryor",
+      "breakpoints": true
     }
   ]
 }

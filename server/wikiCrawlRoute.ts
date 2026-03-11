@@ -41,20 +41,21 @@ const runningJobs = new Set<number>();
 async function resolveAccessToken(
   userAccessToken?: string,
   appId?: string,
-  appSecret?: string
+  appSecret?: string,
+  apiBase = "https://open.feishu.cn"
 ): Promise<string> {
   if (userAccessToken && userAccessToken.trim().length > 0) {
     return userAccessToken.trim();
   }
   if (appId && appSecret) {
-    return getTenantAccessToken(appId, appSecret);
+    return getTenantAccessToken(appId, appSecret, apiBase);
   }
   throw new Error("Authentication required. Please provide either App credentials or a User Access Token.");
 }
 
-async function resolveSpaceId(token: string, accessToken: string): Promise<string> {
+async function resolveSpaceId(token: string, accessToken: string, apiBase = "https://open.feishu.cn"): Promise<string> {
   try {
-    const nodeInfo = await getWikiNodeInfo(token, accessToken);
+    const nodeInfo = await getWikiNodeInfo(token, accessToken, apiBase);
     if (nodeInfo?.space_id) {
       console.log(`[Wiki] Resolved space_id=${nodeInfo.space_id} from node_token=${token}`);
       return nodeInfo.space_id;
@@ -99,13 +100,16 @@ export function registerWikiCrawlRoute(app: Express) {
 
     const parsed = parseFeishuWikiUrl(url);
     if (!parsed.isValid) {
-      res.status(400).json({ error: "Invalid Feishu wiki URL. Please enter a valid URL like: https://xxx.feishu.cn/wiki/TOKEN" });
+      res.status(400).json({ error: "Invalid Feishu/Lark wiki URL. Please enter a valid URL like: https://xxx.feishu.cn/wiki/TOKEN or https://xxx.larksuite.com/wiki/TOKEN" });
       return;
     }
 
+    const { apiBase, platform } = parsed;
+    console.log(`[Wiki] Platform detected: ${platform} (apiBase: ${apiBase})`);
+
     let accessToken: string;
     try {
-      accessToken = await resolveAccessToken(userAccessToken, appId, appSecret);
+      accessToken = await resolveAccessToken(userAccessToken, appId, appSecret, apiBase);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(401).json({ error: msg });
@@ -114,11 +118,14 @@ export function registerWikiCrawlRoute(app: Express) {
 
     let spaceId: string;
     try {
-      spaceId = await resolveSpaceId(parsed.token, accessToken);
+      spaceId = await resolveSpaceId(parsed.token, accessToken, apiBase);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      const tokenUrl = platform === 'lark'
+        ? 'https://open.larksuite.com/api-explorer'
+        : 'https://open.feishu.cn/api-explorer';
       if (msg.includes("TOKEN_EXPIRED")) {
-        res.status(401).json({ error: "Your User Access Token has expired. Please get a new token from https://open.feishu.cn/api-explorer" });
+        res.status(401).json({ error: `Your User Access Token has expired. Please get a new token from ${tokenUrl}` });
       } else {
         res.status(500).json({ error: `Failed to resolve wiki space: ${msg}` });
       }
@@ -128,10 +135,10 @@ export function registerWikiCrawlRoute(app: Express) {
     // crawlMode='subtree' → only crawl children of the specific node in the URL
     // crawlMode='space' (default) → crawl entire wiki space from root
     const rootNodeToken = crawlMode === 'subtree' ? parsed.token : undefined;
-    const sessionId = await createCrawlSession(spaceId, parsed.domain, rootNodeToken);
+    const sessionId = await createCrawlSession(spaceId, parsed.domain, rootNodeToken, apiBase);
     startBackgroundCrawl(sessionId, accessToken);
 
-    res.json({ sessionId, spaceId, domain: parsed.domain, rootNodeToken });
+    res.json({ sessionId, spaceId, domain: parsed.domain, platform, rootNodeToken });
   });
 
   // ─── Resume paused session (background) ──────────────────────────────────

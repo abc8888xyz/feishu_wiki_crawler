@@ -86,3 +86,16 @@
 - [x] UI: thêm toggle "Entire Space / This Node Only" trong form với Crawl Scope section
 - [x] UI: khi chọn "This Node Only", hiển thị node token từ URL
 - [x] UI: label rõ ràng mô tả đang cào gì (toàn space hay chỉ subtree của node X)
+
+## Xóa chức năng dịch title
+
+- [ ] Xóa toàn bộ code liên quan đến dịch title (UI toggle, backend API call, column trong table)
+
+## Hỗ trợ Larksuite (larksuite.com)
+
+- [x] Backend: auto-detect platform từ URL (feishu.cn → open.feishu.cn, larksuite.com → open.larksuite.com)
+- [x] Backend: truyền apiBase vào feishuApi.ts để dùng đúng API base URL cho từng platform
+- [x] Backend: lưu apiBase vào crawl_sessions DB để resume đúng platform
+- [x] UI: hiển thị badge "Feishu" (xanh dương) hoặc "Lark" (xanh sky) khi detect được platform từ URL
+- [x] UI: cập nhật placeholder URL để hỗ trợ cả 2 domain
+- [x] UI: cập nhật hướng dẫn lấy credentials cho cả Feishu và Lark (2-column layout)
