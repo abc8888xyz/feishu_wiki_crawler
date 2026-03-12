@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   History,
   Trash2,
@@ -289,28 +289,29 @@ export function HistoryPanel({ onLoadSession }: HistoryPanelProps) {
     setLoadingSessionId(sessionId);
   };
 
-  // When nodes are loaded, pass to parent
-  if (loadingSessionId !== null && getSessionNodesMutation.data && !getSessionNodesMutation.isLoading) {
-    const { session, nodes } = getSessionNodesMutation.data;
-    // Map DB nodes to WikiNode format
-    const wikiNodes = nodes.map(n => ({
-      node_token: n.nodeToken,
-      obj_token: n.objToken ?? "",
-      obj_type: n.objType ?? "docx",
-      node_type: n.nodeType ?? "",
-      origin_node_token: n.originNodeToken ?? "",
-      origin_space_id: n.originSpaceId ?? "",
-      parent_node_token: n.parentNodeToken ?? "",
-      title: n.title ?? "Untitled",
-      url: n.url ?? "",
-      depth: n.depth,
-      has_children: n.hasChild === 1,
-      obj_create_time: n.objCreateTime ? String(n.objCreateTime) : undefined,
-      obj_edit_time: n.objEditTime ? String(n.objEditTime) : undefined,
-    }));
-    onLoadSession(loadingSessionId, session.domain, wikiNodes, session.spaceId);
-    setLoadingSessionId(null);
-  }
+  // When nodes are loaded, pass to parent — must be in useEffect to avoid setState-in-render
+  useEffect(() => {
+    if (loadingSessionId !== null && getSessionNodesMutation.data && !getSessionNodesMutation.isLoading) {
+      const { session, nodes } = getSessionNodesMutation.data;
+      const wikiNodes = nodes.map(n => ({
+        node_token: n.nodeToken,
+        obj_token: n.objToken ?? "",
+        obj_type: n.objType ?? "docx",
+        node_type: n.nodeType ?? "",
+        origin_node_token: n.originNodeToken ?? "",
+        origin_space_id: n.originSpaceId ?? "",
+        parent_node_token: n.parentNodeToken ?? "",
+        title: n.title ?? "Untitled",
+        url: n.url ?? "",
+        depth: n.depth,
+        has_children: n.hasChild === 1,
+        obj_create_time: n.objCreateTime ? String(n.objCreateTime) : undefined,
+        obj_edit_time: n.objEditTime ? String(n.objEditTime) : undefined,
+      }));
+      onLoadSession(loadingSessionId, session.domain, wikiNodes, session.spaceId);
+      setLoadingSessionId(null);
+    }
+  }, [loadingSessionId, getSessionNodesMutation.data, getSessionNodesMutation.isLoading, onLoadSession]);
 
   // Handle export MD from history
   const handleExportMd = async (sessionId: number) => {

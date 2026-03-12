@@ -1,344 +1,368 @@
-# Product Requirements Document (PRD)
-## Feishu Wiki Crawler
+# Product Requirements Document
+## Feishu Wiki Crawler — v2.1
 
-**Phiên bản:** 2.0  
-**Ngày cập nhật:** 11/03/2026  
-**Tác giả:** Manus AI  
-**Trạng thái:** Đang phát triển
-
----
-
-## 1. Tổng quan sản phẩm
-
-### 1.1 Mô tả
-
-Feishu Wiki Crawler là một ứng dụng web cho phép người dùng **crawl (thu thập) toàn bộ cấu trúc cây trang** của một không gian wiki Feishu (飞书) hoặc Lark, sau đó **xuất nội dung dưới dạng Markdown** để lưu trữ, tìm kiếm hoặc xử lý offline. Ứng dụng hỗ trợ cả hai nền tảng Feishu (`feishu.cn`) và Lark (`larksuite.com`), xử lý được wiki có quy mô lớn (10.000+ trang) với cơ chế crawl bền vững, không bỏ sót node.
-
-### 1.2 Vấn đề cần giải quyết
-
-Feishu Wiki không cung cấp tính năng xuất toàn bộ không gian wiki ra file offline theo cách đơn giản. Người dùng muốn:
-
-- Lưu trữ toàn bộ nội dung wiki để đọc offline hoặc backup
-- Tìm kiếm toàn văn bản trên tất cả trang wiki (Feishu search bị giới hạn)
-- Chuyển đổi nội dung sang hệ thống khác (Notion, Obsidian, GitHub Wiki, v.v.)
-- Phân tích cấu trúc và metadata của toàn bộ không gian wiki
-
-### 1.3 Đối tượng người dùng
-
-| Nhóm người dùng | Nhu cầu chính |
-|---|---|
-| Quản trị viên kiến thức (Knowledge Manager) | Backup định kỳ, kiểm tra cấu trúc wiki |
-| Kỹ sư phần mềm | Tích hợp nội dung wiki vào pipeline xử lý văn bản, RAG |
-| Nhà nghiên cứu / Phân tích dữ liệu | Phân tích tần suất chỉnh sửa, tác giả, cấu trúc tổ chức |
-| Người dùng cá nhân | Lưu trữ wiki cá nhân, chuyển đổi sang công cụ khác |
+**Tác giả:** Manus AI
+**Ngày cập nhật:** Tháng 3, 2026
+**Phiên bản:** 2.1 (Stable)
+**Trạng thái:** Production-ready
 
 ---
 
-## 2. Phạm vi tính năng (Scope)
+## 1. Tổng Quan Sản Phẩm
 
-### 2.1 Trong phạm vi (In Scope)
+**Feishu Wiki Crawler** là một ứng dụng web chuyên dụng giúp người dùng thu thập, trực quan hóa và xuất toàn bộ cấu trúc nội dung từ không gian wiki Feishu (飞书) và Lark (larksuite.com). Ứng dụng giải quyết bài toán thực tế: khi một tổ chức có hàng nghìn trang tài liệu trên Feishu Wiki, việc kiểm kê, sao lưu hoặc di chuyển nội dung đòi hỏi phải thu thập toàn bộ danh sách trang — điều mà giao diện Feishu không hỗ trợ trực tiếp.
 
-- Crawl cấu trúc cây wiki qua Feishu/Lark Open API
-- Hỗ trợ xác thực bằng App Credentials (App ID + App Secret) hoặc User Access Token
-- Hiển thị cây wiki dạng bảng có thể tìm kiếm, sắp xếp
-- Xuất danh sách node dạng CSV
-- Xuất nội dung trang `docx` dạng Markdown (ZIP)
-- Hỗ trợ crawl toàn space hoặc chỉ subtree của một node
-- Hỗ trợ resume khi crawl bị gián đoạn (token hết hạn, rate limit)
+### 1.1 Vấn Đề Cần Giải Quyết
 
-### 2.2 Ngoài phạm vi (Out of Scope)
+Feishu Wiki cung cấp giao diện duyệt tài liệu nhưng không có tính năng xuất danh sách trang, sao lưu hàng loạt, hay tạo sitemap. Người dùng muốn biết wiki của mình có bao nhiêu trang và cấu trúc phân cấp như thế nào; xuất toàn bộ nội dung dạng Markdown để lưu trữ offline hoặc chuyển sang hệ thống khác (Notion, Obsidian, Confluence); kiểm kê tài liệu theo loại (docx, sheet, bitable, mindnote...) để lên kế hoạch migration; và lưu lịch sử các lần crawl để so sánh và quản lý theo thời gian.
 
-- Xuất file Docx hoặc PDF (yêu cầu scope `drive:export` đặc biệt từ Feishu)
-- Chỉnh sửa hoặc ghi ngược nội dung lên Feishu Wiki
-- Crawl Feishu Sheets, Bitable, hoặc các loại tài liệu khác ngoài `docx`
-- Đồng bộ tự động theo lịch (scheduled sync)
-- Tìm kiếm toàn văn trên nội dung đã crawl
+### 1.2 Đối Tượng Người Dùng
+
+| Nhóm | Mô tả | Nhu cầu chính |
+|------|-------|---------------|
+| **Quản trị viên IT** | Quản lý hệ thống tài liệu nội bộ doanh nghiệp | Kiểm kê, backup, migration |
+| **Kỹ sư nội dung** | Xây dựng knowledge base, tài liệu kỹ thuật | Export Markdown để tích hợp vào CI/CD docs |
+| **Quản lý dự án** | Theo dõi tài liệu dự án trên Feishu | Tạo danh sách trang, kiểm tra cấu trúc |
+| **Nhà phát triển** | Tích hợp Feishu vào workflow tự động | Lấy dữ liệu dạng JSON/CSV để xử lý tiếp |
 
 ---
 
-## 3. Kiến trúc kỹ thuật
+## 2. Phạm Vi Tính Năng
 
-### 3.1 Stack công nghệ
+### 2.1 In Scope — Đã Triển Khai
 
-| Tầng | Công nghệ |
-|---|---|
-| Frontend | React 19, TypeScript, Tailwind CSS 4, shadcn/ui |
-| Backend | Node.js, Express 4, tRPC 11 |
-| Database | MySQL / TiDB (Drizzle ORM) |
-| API Protocol | tRPC (type-safe RPC) + REST (file download endpoints) |
-| Crawl Engine | Concurrent BFS với p-limit, SSE streaming |
-| Auth | Manus OAuth (đăng nhập app) + Feishu API credentials |
+**Crawl và Thu Thập Dữ Liệu**
 
-### 3.2 Mô hình dữ liệu
+Ứng dụng hỗ trợ thu thập toàn bộ cây wiki từ root của một Space (Entire Space mode) hoặc chỉ cây con của một node cụ thể (Subtree mode). Cả hai nền tảng Feishu (`feishu.cn`) và Lark (`larksuite.com`) đều được hỗ trợ với auto-detection từ URL. Shortcut nodes (cross-space links) được xử lý bằng cách theo dõi `origin_node_token`. Persistent BFS queue lưu vào database đảm bảo không bỏ sót node khi bị rate limit hoặc token hết hạn. Người dùng có thể resume crawl từ điểm dừng khi cung cấp token mới. Tiến trình được cập nhật real-time qua polling mỗi 2 giây.
 
-Hệ thống sử dụng 3 bảng chính để quản lý trạng thái crawl:
+**Xác Thực**
 
-**Bảng `crawl_sessions`** — Mỗi lần crawl là một session độc lập.
+Hỗ trợ hai chế độ: App Credentials (App ID + App Secret) để lấy `tenant_access_token` tự động, và User Access Token (nhập trực tiếp, hữu hiệu 2 giờ). Tính năng Test Connection giúp xác minh credentials trước khi crawl. Platform được auto-detect từ URL để dùng đúng API endpoint.
+
+**Hiển Thị Kết Quả**
+
+Tree View hiển thị cấu trúc phân cấp tương tác với tìm kiếm và highlight (tự động tắt khi > 5.000 nodes). Table View sử dụng virtual scroll hỗ trợ 10.000+ rows, có tìm kiếm full-text, lọc theo loại node, sắp xếp theo cột. Thống kê loại node (docx, sheet, bitable, mindnote, slides...) hiển thị dạng badge. Badge platform (Feishu / Lark) và domain được hiển thị rõ ràng.
+
+**Export Dữ Liệu**
+
+- **CSV**: Xuất toàn bộ metadata (title, URL, type, depth, created_at, updated_at).
+- **JSON**: Xuất toàn bộ node objects dạng JSON array.
+- **Markdown ZIP**: Xuất nội dung của tất cả trang `docx` thành file `.md`, tổ chức theo thư mục phân cấp phản ánh cấu trúc wiki. Yêu cầu User Access Token.
+
+**Tab Lịch Sử**
+
+Danh sách tất cả phiên crawl với trạng thái (Running / Paused / Done / Failed). Cho phép xem lại kết quả của phiên cũ, xóa phiên (cascade delete), tìm kiếm theo domain, và thống kê tổng hợp.
+
+### 2.2 Out of Scope — Không Triển Khai
+
+**Export Docx/PDF** đã được nghiên cứu và loại bỏ: Feishu Drive Export API yêu cầu scope `drive:export` đặc biệt không khả dụng với cấu hình app thông thường (lỗi `1069902: no permission`).
+
+Ngoài ra, ứng dụng không hỗ trợ: crawl nội dung trang không phải docx (Sheet, Bitable, Mindnote, Slides chỉ được liệt kê metadata); đồng bộ hai chiều (chỉ đọc, không ghi lại Feishu); lên lịch crawl tự động (không có cron job); và xác thực người dùng ứng dụng (không yêu cầu đăng nhập vào ứng dụng này).
+
+---
+
+## 3. Kiến Trúc Kỹ Thuật
+
+### 3.1 Technology Stack
+
+| Tầng | Công nghệ | Phiên bản |
+|------|-----------|-----------|
+| **Frontend** | React + TypeScript | 19 / 5.x |
+| **Styling** | Tailwind CSS + shadcn/ui | 4.x |
+| **API Layer** | tRPC + Express | 11 / 4.x |
+| **Database** | MySQL / TiDB (via Drizzle ORM) | — |
+| **Build** | Vite | 6.x |
+| **Testing** | Vitest | 2.x |
+| **Packaging** | archiver (ZIP) | — |
+
+### 3.2 Mô Hình Dữ Liệu
+
+Hệ thống sử dụng ba bảng chính trong MySQL/TiDB:
+
+**Bảng `crawl_sessions`** — Mỗi lần crawl tạo một session:
 
 | Cột | Kiểu | Mô tả |
-|---|---|---|
-| `id` | INT PK | ID session |
-| `spaceId` | VARCHAR(64) | Feishu space_id |
-| `domain` | VARCHAR(256) | Domain wiki (vd: `https://waytoagi.feishu.cn`) |
-| `apiBase` | VARCHAR(256) | API base URL (`open.feishu.cn` hoặc `open.larksuite.com`) |
+|-----|------|-------|
+| `id` | INT PK | Auto-increment |
+| `spaceId` | VARCHAR(64) | Feishu Space ID |
+| `domain` | VARCHAR(256) | Domain của wiki (ví dụ: `waytoagi.feishu.cn`) |
+| `apiBase` | VARCHAR(256) | API endpoint (`open.feishu.cn` hoặc `open.larksuite.com`) |
 | `status` | ENUM | `running` / `paused` / `done` / `failed` |
-| `totalNodes` | INT | Tổng số node đã crawl |
-| `pendingQueue` | INT | Số task đang chờ trong queue |
-| `skippedNodes` | INT | Số node bị bỏ qua (không có quyền) |
-| `errorMsg` | TEXT | Thông báo lỗi nếu có |
+| `totalNodes` | INT | Số nodes đã crawl được |
+| `pendingQueue` | INT | Số tasks còn trong queue |
+| `skippedNodes` | INT | Số nodes bị bỏ qua (lỗi vĩnh viễn) |
+| `errorMsg` | TEXT | Thông báo lỗi nếu failed |
+| `createdAt` | TIMESTAMP | Thời điểm bắt đầu crawl |
 
-**Bảng `crawl_queue`** — Hàng đợi BFS bền vững, lưu vào DB để không mất khi restart.
+**Bảng `crawl_queue`** — Persistent BFS queue:
 
 | Cột | Kiểu | Mô tả |
-|---|---|---|
-| `id` | INT PK | ID task |
-| `sessionId` | INT FK | Thuộc session nào |
+|-----|------|-------|
+| `id` | INT PK | Auto-increment |
+| `sessionId` | INT FK | Liên kết với `crawl_sessions` |
 | `parentToken` | VARCHAR(64) | Token của node cha (null = root) |
 | `fetchSpaceId` | VARCHAR(64) | Space ID cần fetch (hỗ trợ cross-space shortcuts) |
 | `depth` | INT | Độ sâu trong cây |
 | `status` | ENUM | `pending` / `done` / `failed` |
-| `retryCount` | INT | Số lần đã retry |
+| `retryCount` | INT | Số lần retry đã thực hiện |
 
-**Bảng `crawl_nodes`** — Tất cả node đã phát hiện.
+**Bảng `crawl_nodes`** — Tất cả nodes đã thu thập:
 
 | Cột | Kiểu | Mô tả |
-|---|---|---|
-| `id` | INT PK | ID node |
-| `sessionId` | INT FK | Thuộc session nào |
-| `nodeToken` | VARCHAR(64) | Token định danh node trong wiki |
-| `objToken` | VARCHAR(64) | Token của tài liệu thực (docx, sheet, v.v.) |
-| `objType` | VARCHAR(32) | Loại tài liệu: `docx`, `doc`, `sheet`, `bitable`, `file`, `wiki` |
-| `nodeType` | VARCHAR(32) | `origin` hoặc `shortcut` |
+|-----|------|-------|
+| `id` | INT PK | Auto-increment |
+| `sessionId` | INT FK | Liên kết với `crawl_sessions` |
+| `nodeToken` | VARCHAR(64) | Token định danh node trong Feishu |
+| `objToken` | VARCHAR(64) | Token của document object (dùng để export) |
+| `objType` | VARCHAR(32) | Loại document: `docx`, `sheet`, `bitable`... |
+| `nodeType` | VARCHAR(32) | Loại node: `origin` hoặc `shortcut` |
+| `originNodeToken` | VARCHAR(64) | Token gốc (cho shortcut nodes) |
+| `originSpaceId` | VARCHAR(64) | Space gốc (cho cross-space shortcuts) |
+| `parentNodeToken` | VARCHAR(64) | Token của node cha |
 | `title` | TEXT | Tiêu đề trang |
 | `url` | TEXT | URL đầy đủ của trang |
 | `depth` | INT | Độ sâu trong cây (0 = root) |
-| `hasChild` | INT | 0/1 — có trang con không |
-| `parentNodeToken` | VARCHAR(64) | Token node cha |
-| `objCreateTime` | BIGINT | Thời điểm tạo tài liệu (Unix ms) |
-| `objEditTime` | BIGINT | Thời điểm chỉnh sửa cuối (Unix ms) |
+| `hasChild` | INT | 0/1 — có node con hay không |
+| `objCreateTime` | BIGINT | Unix timestamp tạo document |
+| `objEditTime` | BIGINT | Unix timestamp chỉnh sửa gần nhất |
 
-### 3.3 Luồng crawl (Persistent BFS)
+### 3.3 Luồng Crawl — Persistent BFS
+
+Luồng crawl sử dụng kiến trúc **background job + polling** thay vì SSE để tránh timeout trên wiki lớn:
 
 ```
-[User nhập URL + credentials]
-        ↓
-[Backend: parse URL → extract space_id]
-        ↓
-[Tạo crawl_session + seed crawl_queue với root node]
-        ↓
-[SSE stream: gửi progress real-time về frontend]
-        ↓
-[BFS loop: lấy batch pending tasks từ DB]
-        ↓
-[Fetch children từ Feishu API (concurrency=5, retry với backoff)]
-        ↓
-[Lưu nodes vào crawl_nodes, đánh dấu task done]
-        ↓
-[Nếu rate limit → đưa task về pending, đợi backoff]
-        ↓
-[Nếu token hết hạn → pause session, thông báo user]
-        ↓
-[Khi queue rỗng → session done]
+Client                    Server                      Feishu API
+  │                          │                              │
+  ├─ POST /crawl/start ──────►│                              │
+  │                          ├─ createCrawlSession()         │
+  │                          │  (seed queue với root)        │
+  │◄─ { sessionId } ─────────┤                              │
+  │                          │                              │
+  ├─ GET /crawl/status ──────►│ (poll mỗi 2s)               │
+  │                          ├─ runCrawlSession()            │
+  │                          │  ├─ fetch batch từ queue      │
+  │                          │  ├─ gọi Feishu list_nodes ───►│
+  │                          │  ├─ lưu nodes vào DB          │
+  │                          │  ├─ thêm children vào queue   │
+  │                          │  └─ xử lý rate limit (retry)  │
+  │◄─ { status, count } ─────┤                              │
+  │                          │                              │
+  ├─ GET /crawl/nodes ───────►│ (khi status=done)            │
+  │◄─ { nodes[], tree[] } ───┤                              │
+```
+
+**Xử lý rate limit:** Khi nhận lỗi `99991400` từ Feishu, engine tự động retry với exponential backoff (2s → 4s → 8s → 16s → 32s, tối đa 5 lần). Khi token hết hạn (`99991668`), session chuyển sang `paused` và người dùng có thể resume với token mới.
+
+**Xử lý shortcut nodes:** Nodes loại `shortcut` có `originNodeToken` và `originSpaceId` khác với space hiện tại. Engine tự động theo dõi và crawl sang space gốc để lấy children.
+
+| Loại lỗi | Mã lỗi Feishu | Xử lý |
+|----------|---------------|-------|
+| Token hết hạn | 99991668 | Pause session, thông báo user, cho phép Resume |
+| Rate limit | 99991400 | Backoff 2s→32s, retry tối đa 5 lần |
+| Không có quyền | 230002-230004 | Bỏ qua node, tăng `skippedNodes`, tiếp tục |
+| Lỗi HTTP 5xx | — | Retry với backoff 500ms→8s |
+
+### 3.4 Luồng Export Markdown
+
+```
+Client                    Server                      Feishu Docs API
+  │                          │                              │
+  ├─ POST /export/start ─────►│                              │
+  │  { sessionId, token }     ├─ load docx nodes từ DB       │
+  │                          ├─ tạo ExportJob (in-memory)    │
+  │◄─ { jobId } ─────────────┤                              │
+  │                          │                              │
+  ├─ GET /export/status ─────►│ (poll mỗi 2s)               │
+  │                          ├─ buildNodePaths()             │
+  │                          │  (xây dựng cây thư mục)       │
+  │                          ├─ fetchDocxMarkdown() ────────►│
+  │                          │  (concurrency=3, delay=800ms) │
+  │                          ├─ đóng gói vào ZIP buffer      │
+  │◄─ { done, total } ───────┤                              │
+  │                          │                              │
+  ├─ GET /export/download ───►│                              │
+  │◄─ ZIP file ──────────────┤                              │
+```
+
+**Tổ chức thư mục trong ZIP:** Hàm `buildNodePaths()` xây dựng đường dẫn đầy đủ cho từng node dựa trên cây cha-con. Ví dụ cấu trúc ZIP đầu ra:
+
+```
+Chương_1/
+  Giới_thiệu.md
+  Phần_1.1/
+    Chi_tiết.md
+    Bài_thực_hành.md
+Chương_2/
+  Tổng_quan.md
+  Phần_2.1/
+    Hướng_dẫn.md
 ```
 
 ---
 
-## 4. Tính năng chi tiết
+## 4. API Endpoints
 
-### 4.1 Xác thực (Authentication)
+### 4.1 REST Endpoints (Express)
 
-Ứng dụng hỗ trợ hai chế độ xác thực với Feishu API:
+| Method | Path | Mô tả |
+|--------|------|-------|
+| `POST` | `/api/wiki/crawl/start` | Bắt đầu phiên crawl mới (persistent BFS) |
+| `POST` | `/api/wiki/crawl/resume` | Resume phiên crawl bị tạm dừng |
+| `GET` | `/api/wiki/crawl/status` | Lấy trạng thái phiên crawl (poll mỗi 2s) |
+| `GET` | `/api/wiki/crawl/nodes` | Lấy tất cả nodes của phiên crawl |
+| `POST` | `/api/wiki/export/start` | Bắt đầu export Markdown ZIP |
+| `GET` | `/api/wiki/export/status` | Lấy tiến trình export |
+| `GET` | `/api/wiki/export/download` | Download file ZIP |
 
-**Chế độ App Credentials** phù hợp để crawl cấu trúc wiki (danh sách node, metadata). Người dùng cung cấp App ID và App Secret từ Feishu Developer Console. Backend tự động lấy `tenant_access_token` và làm mới khi hết hạn.
-
-**Chế độ User Access Token** bắt buộc khi cần đọc nội dung tài liệu (export Markdown). Token có thời hạn 2 giờ. Khi token hết hạn giữa chừng, hệ thống tạm dừng session và cho phép người dùng cung cấp token mới để tiếp tục (Resume).
-
-> **Lưu ý quan trọng:** Feishu API `/docs/v1/content` (đọc nội dung Markdown) chỉ hoạt động với **User Access Token**. App Token (`tenant_access_token`) không có scope `docs:document.content:read` cần thiết.
-
-### 4.2 Crawl Wiki
-
-**Phát hiện platform tự động:** Hệ thống tự nhận diện URL thuộc Feishu (`feishu.cn`) hay Lark (`larksuite.com`) và chọn API base URL phù hợp (`open.feishu.cn` hoặc `open.larksuite.com`).
-
-**Phân giải URL:** URL wiki có thể chứa `node_token` (vd: `https://waytoagi.feishu.cn/wiki/QPe5w5g7...`). Backend gọi API `wiki/v2/spaces/get_node` để phân giải `node_token` → `space_id` trước khi bắt đầu crawl.
-
-**Phạm vi crawl:** Người dùng có thể chọn:
-- **Entire Space** — crawl toàn bộ không gian wiki từ root
-- **This Node Only** — chỉ crawl subtree của node trong URL
-
-**Xử lý shortcut nodes:** Feishu Wiki cho phép tạo shortcut (liên kết) đến trang thuộc space khác. Hệ thống xử lý `node_type=shortcut` bằng cách dùng `origin_node_token` và `origin_space_id` để fetch children từ space gốc.
-
-**Xử lý lỗi và retry:**
-
-| Loại lỗi | Xử lý |
-|---|---|
-| Token hết hạn (code 99991668) | Dừng crawl ngay, thông báo user, cho phép Resume |
-| Rate limit (code 99991400) | Backoff 2s → 4s → 8s → 16s → 32s, retry tối đa 5 lần |
-| Node không có quyền (code 230002-230004) | Bỏ qua node, tăng `skippedNodes`, tiếp tục crawl |
-| Lỗi HTTP 5xx | Retry với exponential backoff (500ms → 1s → 2s → 4s → 8s) |
-
-**Resume session:** Khi session bị tạm dừng (status=`paused`), người dùng có thể cung cấp token mới và nhấn "Resume" để tiếp tục từ điểm dừng. Hệ thống xử lý lại tất cả task có status=`pending` trong queue.
-
-### 4.3 Hiển thị kết quả
-
-**Chế độ bảng (Table View)** là chế độ mặc định, hiển thị tất cả node dưới dạng bảng phẳng với các cột:
-
-| Cột | Mô tả |
-|---|---|
-| Title | Tiêu đề trang, có thể click để mở Feishu |
-| Type | Loại tài liệu (`docx`, `sheet`, `bitable`, v.v.) |
-| Depth | Độ sâu trong cây (0 = root) |
-| Created | Thời điểm tạo |
-| Edited | Thời điểm chỉnh sửa cuối |
-| Actions | Nút download file `.md` cho từng trang |
-
-Bảng hỗ trợ **tìm kiếm theo tiêu đề** (highlight kết quả), **sắp xếp** theo tất cả cột, và **virtual scroll** để xử lý mượt mà với 10.000+ dòng mà không ảnh hưởng hiệu năng.
-
-**Chế độ cây (Tree View)** hiển thị cấu trúc phân cấp của wiki, hỗ trợ expand/collapse từng nhánh và lazy loading cho cây lớn.
-
-### 4.4 Export CSV
-
-Người dùng có thể xuất toàn bộ danh sách node ra file CSV với các cột: `title`, `url`, `type`, `depth`, `nodeToken`, `objToken`, `parentNodeToken`, `hasChild`, `createdAt`, `editedAt`. Tính năng này không yêu cầu Feishu API — dữ liệu đã có sẵn trong database sau khi crawl.
-
-### 4.5 Export Markdown (ZIP)
-
-Tính năng xuất nội dung tất cả trang `docx` sang file Markdown, đóng gói thành một file ZIP.
-
-**Luồng hoạt động:**
-
-```
-[POST /api/wiki/export/start]
-  → Tạo export job (in-memory), trả về jobId
-  → Background: fetch markdown từng trang (concurrency=3, delay=800ms)
-  → Mỗi file .md có YAML frontmatter: title, url, depth
-
-[GET /api/wiki/export/status?jobId=X]
-  → Poll tiến trình: done/total, rate, elapsed
-
-[GET /api/wiki/export/download?jobId=X]
-  → Stream ZIP file về client
-```
-
-**API Feishu sử dụng:** `GET /open-apis/docs/v1/content?doc_token={token}&doc_type=docx&content_type=markdown`
-
-**Rate limit:** 5 requests/giây. Hệ thống dùng concurrency=3 với delay 800ms giữa các batch, đạt ~3.75 req/giây để đảm bảo không vượt giới hạn.
-
-**Cấu trúc file Markdown đầu ra:**
-
-```markdown
----
-title: "Tên trang"
-url: "https://waytoagi.feishu.cn/docx/AbCdEf..."
-depth: 2
----
-
-# Nội dung trang...
-```
-
-**Export từng trang đơn lẻ:** Ngoài export hàng loạt, người dùng có thể download từng trang riêng lẻ trực tiếp từ bảng kết quả qua endpoint `GET /api/wiki/export/single?objToken=...`.
-
-### 4.6 Giao diện người dùng
-
-**Trang chính (Home)** được thiết kế theo phong cách dashboard nội bộ, sử dụng layout một cột tập trung với:
-
-- **Form nhập liệu:** URL wiki, chọn chế độ xác thực (App Credentials / User Access Token), chọn phạm vi crawl (Entire Space / This Node Only)
-- **Progress bar real-time:** Hiển thị số node đã crawl, tốc độ (nodes/giây), thời gian ước tính còn lại qua SSE streaming
-- **Khu vực kết quả:** Tab chuyển đổi giữa Table View và Tree View, thanh tìm kiếm, các nút export (CSV, MD ZIP)
-- **Badge platform:** Hiển thị "Feishu" (màu xanh dương) hoặc "Lark" (màu xanh sky) khi phát hiện platform từ URL
-
-**Trạng thái lỗi:** Mỗi loại lỗi có thông báo riêng biệt, rõ ràng:
-- Token hết hạn → hướng dẫn lấy token mới + nút Resume
-- App Token dùng cho export → cảnh báo và hướng dẫn chuyển sang User Token
-- Node không có quyền → hiển thị số node bị bỏ qua, không dừng crawl
-
----
-
-## 5. API Endpoints
-
-### 5.1 tRPC Procedures
+### 4.2 tRPC Procedures
 
 | Procedure | Loại | Mô tả |
-|---|---|---|
-| `wiki.crawl` | Mutation | Bắt đầu crawl session mới |
-| `wiki.getSession` | Query | Lấy thông tin session theo ID |
-| `wiki.listSessions` | Query | Danh sách tất cả sessions |
-| `wiki.getNodes` | Query | Lấy nodes của một session |
-| `wiki.resumeSession` | Mutation | Resume session đang paused |
-| `wiki.deleteSession` | Mutation | Xóa session và dữ liệu liên quan |
-
-### 5.2 REST Endpoints (File Operations)
-
-| Endpoint | Method | Mô tả |
-|---|---|---|
-| `/api/wiki/crawl/start` | POST | Bắt đầu crawl (persistent BFS) |
-| `/api/wiki/crawl/progress` | GET (SSE) | Stream tiến trình crawl real-time |
-| `/api/wiki/crawl/resume` | POST | Resume session bị pause |
-| `/api/wiki/export/start` | POST | Bắt đầu export Markdown job |
-| `/api/wiki/export/status` | GET | Poll trạng thái export job |
-| `/api/wiki/export/download` | GET | Download ZIP file |
-| `/api/wiki/export/single` | GET | Download một trang .md |
+|-----------|------|-------|
+| `wiki.parseUrl` | Query | Parse URL, trả về token và platform |
+| `wiki.crawl` | Mutation | Crawl đơn giản (legacy, không persistent) |
+| `wiki.testAuth` | Mutation | Kiểm tra App credentials |
+| `wiki.listSessions` | Query | Danh sách tất cả phiên crawl (lịch sử) |
+| `wiki.getSessionNodes` | Query | Lấy nodes của một phiên cụ thể |
+| `wiki.deleteSession` | Mutation | Xóa phiên crawl và dữ liệu liên quan |
 
 ---
 
-## 6. Yêu cầu phi chức năng
+## 5. Tính Năng Chi Tiết
 
-### 6.1 Hiệu năng
+### 5.1 Xác Thực
 
-- Crawl 10.000+ node trong vòng 10–30 phút tùy kích thước wiki và rate limit của Feishu
-- Table view render mượt mà với 10.000+ dòng nhờ virtual scroll (chỉ render ~20 dòng hiển thị)
-- Tree view lazy load — chỉ expand node khi người dùng click
+Ứng dụng hỗ trợ hai chế độ xác thực, phù hợp với các trường hợp sử dụng khác nhau.
 
-### 6.2 Độ tin cậy
+**App Credentials Mode** cho phép người dùng nhập App ID và App Secret từ Feishu Developer Console. Server tự động lấy `tenant_access_token` (hữu hiệu 2 giờ, tự động gia hạn). Chế độ này phù hợp cho crawl metadata nhưng **không thể** export nội dung Markdown vì thiếu scope `docs:document.content:read`.
 
-- Persistent queue đảm bảo không bỏ sót node khi server restart hoặc token hết hạn
-- Retry với exponential backoff cho rate limit và lỗi tạm thời
-- Export job lưu ZIP in-memory — không mất dữ liệu khi client mất kết nối (có thể re-download)
+**User Access Token Mode** cho phép người dùng nhập token lấy từ [Feishu API Explorer](https://open.feishu.cn/api-explorer). Token này có đầy đủ quyền của người dùng, bao gồm đọc nội dung tài liệu. Nhược điểm là token chỉ hữu hiệu 2 giờ và phải gia hạn thủ công.
 
-### 6.3 Bảo mật
+> **Lưu ý:** Export Markdown bắt buộc dùng User Access Token. Khi người dùng chọn App Credentials mode, nút MD (ZIP) sẽ bị disable kèm cảnh báo giải thích lý do.
 
-- Credentials (App Secret, User Access Token) không được lưu vào database — chỉ dùng trong request và xóa sau khi crawl xong
-- Tất cả API calls đến Feishu thực hiện server-side, không expose credentials ra client
-- Session cookie được ký bằng JWT_SECRET
+### 5.2 Crawl Engine
 
-### 6.4 Khả năng mở rộng
+**Persistent BFS Queue** là cơ chế cốt lõi đảm bảo không bỏ sót node. Mỗi phiên crawl tạo một session trong DB và seed queue với task đầu tiên (fetch children của root). Engine xử lý từng batch 5 tasks song song, lưu kết quả vào `crawl_nodes`, và thêm children mới vào `crawl_queue`. Khi gặp rate limit, engine retry với backoff thay vì bỏ qua. Khi token hết hạn, session chuyển sang `paused` và người dùng có thể resume.
 
-- Kiến trúc cho phép thêm loại export mới (vd: HTML, JSON) mà không thay đổi crawl engine
-- Database schema hỗ trợ nhiều sessions song song cho nhiều người dùng
+**Crawl Scope** cho phép người dùng chọn:
+- **Entire Space**: Crawl từ root của toàn bộ Space, thu thập tất cả trang.
+- **This Node Only**: Crawl chỉ cây con của node được chỉ định trong URL. Hữu ích khi chỉ cần một phần của wiki lớn.
+
+### 5.3 Hiển Thị Kết Quả
+
+**Tree View** hiển thị cấu trúc phân cấp tương tác với khả năng mở/đóng từng nhánh, tìm kiếm với highlight kết quả. Tự động bị tắt khi wiki có hơn 5.000 nodes để tránh ảnh hưởng hiệu năng.
+
+**Table View** sử dụng virtual scroll để xử lý 10.000+ rows mà không ảnh hưởng hiệu năng trình duyệt. Hỗ trợ tìm kiếm full-text, lọc theo loại node, sắp xếp theo các cột (title, type, depth, created_at, updated_at). Mỗi row có link trực tiếp đến trang Feishu.
+
+### 5.4 Export Markdown ZIP
+
+Tính năng export Markdown chuyển đổi nội dung của tất cả trang `docx` trong một phiên crawl thành file `.md` và đóng gói thành ZIP. Quy trình:
+
+1. Lọc các nodes có `objType = "docx"` từ DB.
+2. Gọi Feishu Docs API (`/open-apis/docs/v1/content`) cho từng trang với `content_type=markdown`.
+3. Thêm YAML frontmatter (title, url, depth, node_token) vào đầu mỗi file.
+4. Tổ chức file theo cấu trúc thư mục phản ánh cây wiki (hàm `buildNodePaths`).
+5. Đóng gói tất cả vào ZIP buffer in-memory bằng thư viện `archiver`.
+6. Cung cấp link download khi hoàn thành.
+
+**Giới hạn:** Chỉ hỗ trợ trang loại `docx`. Sheet, Bitable, Mindnote không có API export Markdown. Tốc độ: 3 trang song song, delay 800ms giữa các batch để tránh rate limit (5 req/s).
+
+### 5.5 Tab Lịch Sử
+
+Tab Lịch Sử cung cấp giao diện quản lý tất cả phiên crawl đã thực hiện:
+
+- **Danh sách sessions** với thông tin: domain, platform, trạng thái (badge màu), số nodes, thời gian crawl.
+- **Expand row** để xem chi tiết: spaceId, thống kê nodes/queue/skipped, thông báo lỗi.
+- **Xem lại**: Tải nodes của session cũ vào giao diện kết quả hiện tại (chuyển sang tab Crawl).
+- **Export MD**: Export Markdown từ session cũ mà không cần crawl lại.
+- **Xóa**: Xóa session với confirm dialog (cascade delete nodes và queue).
+- **Tìm kiếm**: Lọc sessions theo domain.
+- **Thống kê tổng hợp**: Tổng số sessions, tổng nodes, nodes trung bình mỗi session.
 
 ---
 
-## 7. Hạn chế đã biết
+## 6. Yêu Cầu Phi Chức Năng
 
-Một số hạn chế hiện tại cần người dùng lưu ý:
+### 6.1 Hiệu Năng
 
-**Export Markdown chỉ hỗ trợ node loại `docx`** — các loại khác như `sheet`, `bitable`, `file` không có API đọc nội dung tương đương. Những node này vẫn xuất hiện trong danh sách crawl nhưng không thể export nội dung.
+| Chỉ số | Mục tiêu | Ghi chú |
+|--------|----------|---------|
+| Crawl 1.000 nodes | < 2 phút | Concurrency=5, retry included |
+| Crawl 10.000 nodes | < 20 phút | Có thể cần resume 1-2 lần nếu token hết hạn |
+| Table render 10.000 rows | < 100ms | Virtual scroll |
+| Tree render 5.000 nodes | < 2s | Tắt tự động khi > 5.000 |
+| Export 500 MD files | < 10 phút | Concurrency=3, delay=800ms |
 
-**User Access Token hết hạn sau 2 giờ** — với wiki lớn (10.000+ trang), quá trình export Markdown có thể mất nhiều giờ. Người dùng cần làm mới token định kỳ.
+### 6.2 Độ Tin Cậy
 
-**Export job lưu in-memory** — nếu server restart trong lúc export đang chạy, job sẽ bị mất. Người dùng cần bắt đầu lại. Giải pháp dài hạn là lưu ZIP vào S3.
+Persistent BFS queue đảm bảo không mất dữ liệu khi server restart giữa chừng (queue còn trong DB), token hết hạn (session chuyển sang `paused`, resume được), rate limit tạm thời (retry với backoff, không skip), hoặc node bị lỗi vĩnh viễn (đánh dấu `failed`, tiếp tục crawl các node khác).
 
-**Rate limit Feishu** — tốc độ export Markdown bị giới hạn bởi Feishu API (~5 req/giây). Với 1.000 trang, thời gian export ước tính ~5–10 phút.
+### 6.3 Bảo Mật
 
----
-
-## 8. Roadmap (Tính năng tương lai)
-
-| Ưu tiên | Tính năng | Ghi chú |
-|---|---|---|
-| Cao | Lưu ZIP export lên S3 | Tránh mất file khi server restart, cho phép share link |
-| Cao | Fix lỗi MD export với User Access Token | Debug và xác nhận flow hoạt động end-to-end |
-| Trung bình | Scheduled crawl (tự động theo lịch) | Cron job, gửi thông báo khi xong |
-| Trung bình | Tìm kiếm toàn văn trên nội dung đã crawl | Index Markdown vào Elasticsearch hoặc SQLite FTS |
-| Thấp | Export sang HTML | Dùng markdown-it để convert .md → .html |
-| Thấp | So sánh diff giữa 2 lần crawl | Hiển thị trang mới/xóa/sửa |
+Credentials (App ID, App Secret, User Access Token) **không được lưu trữ** ở bất kỳ đâu trên server. Chúng chỉ tồn tại trong bộ nhớ trong thời gian xử lý request. Người dùng phải cung cấp lại credentials mỗi khi resume hoặc export.
 
 ---
 
-## 9. Lịch sử phiên bản
+## 7. Hạn Chế Đã Biết
 
-| Phiên bản | Ngày | Thay đổi chính |
-|---|---|---|
-| 1.0 | 10/03/2026 | Crawl cơ bản, hiển thị bảng, export CSV |
-| 1.1 | 10/03/2026 | Persistent BFS queue, SSE streaming, Resume |
-| 1.2 | 10/03/2026 | Export Markdown ZIP, download từng trang |
-| 1.3 | 10/03/2026 | Hỗ trợ Larksuite, crawl subtree, virtual scroll |
-| 2.0 | 11/03/2026 | Bỏ tính năng export Docx/PDF (yêu cầu scope đặc biệt), tập trung hoàn thiện MD export |
+**User Access Token hết hạn sau 2 giờ.** Đây là giới hạn của Feishu API, không thể thay đổi. Người dùng cần lấy token mới từ API Explorer khi token hết hạn. Với wiki lớn (> 10.000 nodes), có thể cần resume 1-2 lần.
+
+**Export Markdown chỉ hỗ trợ trang docx.** Feishu không cung cấp API export Markdown cho Sheet, Bitable, Mindnote, hay Slides. Các loại trang này chỉ được liệt kê metadata.
+
+**Export job lưu in-memory.** File ZIP sau khi tạo được giữ trong RAM của server. Nếu server restart, job bị mất và người dùng phải export lại.
+
+**Giới hạn 20.000 nodes khi xem lại lịch sử.** Query `getSessionNodes` giới hạn 20.000 rows để tránh quá tải bộ nhớ. Wiki có hơn 20.000 nodes cần crawl lại thay vì xem từ lịch sử.
+
+**Export Docx/PDF không khả dụng.** Feishu Drive Export API yêu cầu scope `drive:export` đặc biệt phải được cấp phép riêng trong Feishu Developer Console (lỗi `1069902: no permission`). Tính năng này đã được nghiên cứu và loại bỏ khỏi phạm vi hiện tại.
+
+---
+
+## 8. Roadmap
+
+### 8.1 Ưu Tiên Cao (P0)
+
+Các tính năng này giải quyết pain points trực tiếp của người dùng hiện tại:
+
+- **Đặt tên/ghi chú cho session**: Thêm trường `note` vào `crawl_sessions` để người dùng đặt tên dễ nhớ cho mỗi lần crawl (ví dụ: "Wiki nội bộ Q1 2026").
+- **Re-crawl từ lịch sử**: Nút "Crawl lại" trong tab Lịch Sử để khởi động phiên crawl mới với cùng URL, không cần nhập lại.
+
+### 8.2 Ưu Tiên Trung Bình (P1)
+
+- **File `_index.md` trong mỗi thư mục**: Liệt kê các trang con với link, giúp điều hướng khi đọc offline trong Obsidian hoặc VS Code.
+- **Prefix số thứ tự trong tên file**: Thêm `01_`, `02_` vào tên thư mục/file để giữ đúng thứ tự khi mở bằng file explorer.
+- **So sánh hai sessions**: Chọn 2 phiên crawl cùng một wiki để xem nodes nào được thêm/xóa giữa 2 lần.
+- **Lưu file ZIP lên S3**: Thay vì in-memory, lưu file export lên S3 để tránh mất khi server restart và cho phép share link download.
+
+### 8.3 Ưu Tiên Thấp (P2)
+
+- **Scheduled crawl**: Tự động crawl lại theo lịch (hàng ngày/tuần) và lưu vào lịch sử.
+- **Webhook notification**: Gửi thông báo khi crawl hoàn thành (email, Feishu message).
+- **Filter khi export**: Chọn chỉ export một số trang/thư mục thay vì toàn bộ.
+- **Preview cấu trúc ZIP**: Hiển thị cây thư mục sẽ có trong ZIP trước khi download.
+
+---
+
+## 9. Lịch Sử Phiên Bản
+
+| Phiên bản | Tháng | Thay đổi chính |
+|-----------|-------|----------------|
+| **v1.0** | 02/2026 | MVP: crawl cơ bản, tree view, table view, CSV export |
+| **v1.1** | 02/2026 | Thêm User Access Token, xử lý private wikis |
+| **v1.2** | 02/2026 | Tối ưu hiệu năng: concurrent BFS, SSE streaming |
+| **v1.3** | 02/2026 | Fix shortcut nodes, cross-space crawling |
+| **v1.4** | 02/2026 | Persistent BFS queue (DB-backed), resume support |
+| **v1.5** | 02/2026 | Subtree crawl mode, Larksuite support |
+| **v2.0** | 03/2026 | Export Markdown ZIP với tổ chức thư mục phân cấp |
+| **v2.1** | 03/2026 | Tab Lịch Sử: xem lại, xóa, export từ sessions cũ |
+
+---
+
+## 10. Phụ Lục: Feishu API Được Sử Dụng
+
+| API | Endpoint | Mục đích |
+|-----|----------|---------|
+| Get Tenant Access Token | `POST /open-apis/auth/v3/tenant_access_token/internal` | Lấy app token từ App ID + Secret |
+| Get Wiki Node Info | `GET /open-apis/wiki/v2/spaces/get_node` | Resolve node_token → space_id |
+| List Wiki Nodes | `GET /open-apis/wiki/v2/spaces/{space_id}/nodes` | Lấy danh sách nodes trong một space |
+| Get Doc Content | `GET /open-apis/docs/v1/content` | Lấy nội dung Markdown của một trang docx |
+
+Tất cả API calls đều thông qua `open.feishu.cn` (Feishu) hoặc `open.larksuite.com` (Lark) tùy theo platform được detect từ URL đầu vào.
