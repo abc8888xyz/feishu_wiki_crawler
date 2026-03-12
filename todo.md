@@ -144,3 +144,15 @@
 - [x] Backend: thư mục cha dùng tên title của node cha (sanitized)
 - [x] Backend: xử lý trường hợp node cha không có trong session (fallback về root)
 - [x] Test: 59/59 tests pass cho buildNodePaths, sanitizeFilename, deduplication
+
+## Tab Lịch Sử (History)
+
+- [x] Backend tRPC: listSessions - danh sách tất cả sessions (id, domain, status, totalNodes, createdAt)
+- [x] Backend tRPC: deleteSession - xóa session và toàn bộ nodes/queue liên quan
+- [x] Backend tRPC: getSessionNodes - lấy nodes của session cũ để xem lại
+- [x] UI: trang History với bảng sessions (domain, status, nodes, ngày crawl, actions)
+- [x] UI: action "Xem lại" - load nodes của session cũ vào kết quả hiện tại
+- [x] UI: action "Xóa" - xóa session với confirm dialog
+- [x] UI: action "Export MD" - export markdown từ session cũ
+- [x] UI: badge status (running/paused/done/failed) với màu sắc
+- [x] UI: tab navigation giữa "Crawl" và "Lịch Sử" (header switcher)

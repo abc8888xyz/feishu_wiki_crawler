@@ -11,6 +11,9 @@ import {
   fetchAllNodes,
   buildTree,
 } from "./feishuApi";
+import { getDb } from "./db";
+import { crawlSessions, crawlNodes, crawlQueue } from "../drizzle/schema";
+import { desc, eq, and } from "drizzle-orm";
 
 export const appRouter = router({
   system: systemRouter,
@@ -177,6 +180,56 @@ export const appRouter = router({
           treeAvailable: allNodes.length <= 5000,
           mode: "api" as const,
         };
+      }),
+
+    /**
+     * List all crawl sessions (history)
+     */
+    listSessions: publicProcedure.query(async () => {
+      const db = await getDb();
+      if (!db) return [];
+      const rows = await db
+        .select()
+        .from(crawlSessions)
+        .orderBy(desc(crawlSessions.createdAt))
+        .limit(100);
+      return rows;
+    }),
+
+    /**
+     * Get nodes for a specific session (for re-viewing history)
+     */
+    getSessionNodes: publicProcedure
+      .input(z.object({ sessionId: z.number() }))
+      .query(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
+        const session = await db
+          .select()
+          .from(crawlSessions)
+          .where(eq(crawlSessions.id, input.sessionId))
+          .limit(1);
+        if (!session.length) throw new TRPCError({ code: "NOT_FOUND", message: "Session not found" });
+        const nodes = await db
+          .select()
+          .from(crawlNodes)
+          .where(eq(crawlNodes.sessionId, input.sessionId))
+          .limit(20000);
+        return { session: session[0], nodes };
+      }),
+
+    /**
+     * Delete a session and all its nodes/queue items
+     */
+    deleteSession: publicProcedure
+      .input(z.object({ sessionId: z.number() }))
+      .mutation(async ({ input }) => {
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB not available" });
+        await db.delete(crawlNodes).where(eq(crawlNodes.sessionId, input.sessionId));
+        await db.delete(crawlQueue).where(eq(crawlQueue.sessionId, input.sessionId));
+        await db.delete(crawlSessions).where(eq(crawlSessions.id, input.sessionId));
+        return { success: true };
       }),
 
     /**

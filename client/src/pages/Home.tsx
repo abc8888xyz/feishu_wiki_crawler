@@ -27,6 +27,7 @@ import {
   Globe,
   FileType,
   FileType2,
+  History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
 import { WikiTreeView, type WikiNode } from "@/components/WikiTreeView";
 import { WikiTable, type WikiTableAuthInfo } from "@/components/WikiTable";
+import { HistoryPanel } from "@/pages/History";
 
 // ─── CSV Export ──────────────────────────────────────────────────────────────
 function exportToCsv(nodes: WikiNode[], filename = "feishu_wiki_links.csv") {
@@ -453,6 +455,8 @@ export default function Home() {
   const [crawlMode, setCrawlMode] = useState<"space" | "subtree">("space");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("tree");
+  const [mainTab, setMainTab] = useState<"crawl" | "history">("crawl");
+  const [historyLoadedResult, setHistoryLoadedResult] = useState<{ domain: string; nodes: WikiNode[]; spaceId: string } | null>(null);
 
   // Parse node token from URL for display
   const parsedUrlToken = useMemo(() => {
@@ -488,20 +492,22 @@ export default function Home() {
   }, [paused, appId, appSecret, userToken, authMode, resume]);
 
   const handleExportCsv = useCallback(() => {
-    if (!result?.nodes.length) return;
+    const er = result ?? (historyLoadedResult ? { nodes: historyLoadedResult.nodes, spaceId: historyLoadedResult.spaceId } : null);
+    if (!er?.nodes.length) return;
     exportToCsv(
-      result.nodes,
-      `feishu_wiki_${result.spaceId || "export"}_${new Date().toISOString().slice(0, 10)}.csv`
+      er.nodes,
+      `feishu_wiki_${er.spaceId || "export"}_${new Date().toISOString().slice(0, 10)}.csv`
     );
-  }, [result]);
+  }, [result, historyLoadedResult]);
 
   const handleExportJson = useCallback(() => {
-    if (!result?.nodes.length) return;
+    const er = result ?? (historyLoadedResult ? { nodes: historyLoadedResult.nodes, spaceId: historyLoadedResult.spaceId } : null);
+    if (!er?.nodes.length) return;
     exportToJson(
-      result.nodes,
-      `feishu_wiki_${result.spaceId || "export"}_${new Date().toISOString().slice(0, 10)}.json`
+      er.nodes,
+      `feishu_wiki_${er.spaceId || "export"}_${new Date().toISOString().slice(0, 10)}.json`
     );
-  }, [result]);
+  }, [result, historyLoadedResult]);
 
   // ─── Markdown Export State ───────────────────────────────────────────────
   const [mdExportJobId, setMdExportJobId] = useState<string | null>(null);
@@ -525,7 +531,7 @@ export default function Home() {
     setMdExportJobId(null);
 
     try {
-      const body: Record<string, string> = { sessionId: String(result.sessionId) };
+      const body: Record<string, string> = { sessionId: String(result!.sessionId) };
       if (authMode === "token" && userToken.trim()) body.userAccessToken = userToken.trim();
       if (authMode === "app" && appId.trim()) body.appId = appId.trim();
       if (authMode === "app" && appSecret.trim()) body.appSecret = appSecret.trim();
@@ -617,7 +623,7 @@ export default function Home() {
   useEffect(() => () => { stopDocxPoll(); stopPdfPoll(); }, [stopDocxPoll, stopPdfPoll]);
 
   const handleExportDoc = useCallback(async (format: DocExportFormat) => {
-    if (!result?.sessionId) return;
+    if (!result?.sessionId) return; // doc export requires live session
 
     const setExport = format === "docx" ? setDocxExport : setPdfExport;
     const stopPoll = format === "docx" ? stopDocxPoll : stopPdfPoll;
@@ -687,14 +693,37 @@ export default function Home() {
     a.click();
   }, [docxExport.jobId, pdfExport.jobId]);
 
-  const hasResults = !!result && result.nodes.length > 0;
-  const isLargeWiki = result && result.totalCount > 5000;
+  // Effective result: either from live crawl or loaded from history
+  const effectiveResult = result ?? (historyLoadedResult ? {
+    sessionId: undefined as number | undefined,
+    spaceId: historyLoadedResult.spaceId,
+    domain: historyLoadedResult.domain,
+    totalCount: historyLoadedResult.nodes.length,
+    skipped: 0,
+    nodes: historyLoadedResult.nodes,
+    tree: historyLoadedResult.nodes.filter(n => !n.parent_node_token),
+    treeAvailable: historyLoadedResult.nodes.length <= 5000,
+  } : null);
+
+  const hasResults = !!effectiveResult && effectiveResult.nodes.length > 0;
+  const isLargeWiki = effectiveResult && effectiveResult.totalCount > 5000;
   const isExportDisabled = authMode === "app";
 
   // Auto-switch to table tab when wiki is large
   useEffect(() => {
     if (isLargeWiki) setActiveTab("table");
   }, [isLargeWiki]);
+
+  // Handle loading a session from history into the crawl view
+  const handleLoadHistorySession = (
+    _sessionId: number,
+    domain: string,
+    nodes: unknown[],
+    spaceId: string
+  ) => {
+    setMainTab("crawl");
+    setHistoryLoadedResult({ domain, nodes: nodes as WikiNode[], spaceId });
+  };
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -710,20 +739,60 @@ export default function Home() {
               <p className="text-xs text-muted-foreground leading-tight">Extract all links from Feishu Wiki spaces</p>
             </div>
           </div>
-          {hasResults && (
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleExportCsv}>
-                <Download className="w-3.5 h-3.5" /> CSV
-              </Button>
-              <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleExportJson}>
-                <FileDown className="w-3.5 h-3.5" /> JSON
-              </Button>
+          <div className="flex items-center gap-3">
+            {/* Main tab switcher in header */}
+            <div className="flex gap-0.5 p-0.5 bg-muted rounded-md">
+              <button
+                className={cn("px-3 py-1.5 text-xs rounded font-medium transition-colors flex items-center gap-1.5", mainTab === "crawl" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                onClick={() => setMainTab("crawl")}
+              >
+                <RefreshCw className="w-3 h-3" />
+                Crawl
+              </button>
+              <button
+                className={cn("px-3 py-1.5 text-xs rounded font-medium transition-colors flex items-center gap-1.5", mainTab === "history" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                onClick={() => setMainTab("history")}
+              >
+                <History className="w-3 h-3" />
+                Lịch Sử
+              </button>
             </div>
-          )}
+            {hasResults && mainTab === "crawl" && (
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleExportCsv}>
+                  <Download className="w-3.5 h-3.5" /> CSV
+                </Button>
+                <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs" onClick={handleExportJson}>
+                  <FileDown className="w-3.5 h-3.5" /> JSON
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
       <main className="flex-1 container py-6 flex flex-col gap-5">
+        {/* History Tab Content */}
+        {mainTab === "history" && (
+          <Card className="shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <History className="w-4 h-4 text-primary" />
+                Lịch Sử Crawl
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Xem lại, tải xuống hoặc xóa các phiên crawl trước đó. Nhấn <strong>Xem</strong> để tải kết quả vào tab Crawl.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <HistoryPanel onLoadSession={handleLoadHistorySession} />
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Crawl Tab Content */}
+        {mainTab === "crawl" && (
+          <>
         {/* Input Card */}
         <Card className="shadow-sm">
           <CardHeader className="pb-3">
@@ -905,26 +974,26 @@ export default function Home() {
               <div className="flex items-center gap-3 flex-wrap">
                 <div className="flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-green-500" />
-                  <span className="text-sm font-semibold">{result.nodes.length.toLocaleString()} pages found</span>
+                  <span className="text-sm font-semibold">{effectiveResult!.nodes.length.toLocaleString()} pages found</span>
                 </div>
-                {result.skipped > 0 && (
+                {effectiveResult!.skipped > 0 && (
                   <>
                     <Separator orientation="vertical" className="h-4" />
                     <span className="text-xs text-amber-600 flex items-center gap-1">
                       <AlertTriangle className="w-3 h-3" />
-                      {result.skipped} permanently failed
+                      {effectiveResult!.skipped} permanently failed
                     </span>
                   </>
                 )}
                 <Separator orientation="vertical" className="h-4" />
-                <span className="text-xs text-muted-foreground font-mono">{result.domain}</span>
+                <span className="text-xs text-muted-foreground font-mono">{effectiveResult!.domain}</span>
                 <Separator orientation="vertical" className="h-4" />
-                <span className="text-xs text-muted-foreground">Space: <code className="font-mono">{result.spaceId}</code></span>
+                <span className="text-xs text-muted-foreground">Space: <code className="font-mono">{effectiveResult!.spaceId}</code></span>
               </div>
 
               {/* Export buttons */}
               <div className="flex items-center gap-2 flex-wrap">
-                <TypeStats nodes={result.nodes} />
+                <TypeStats nodes={effectiveResult!.nodes} />
 
                 {/* CSV */}
                 <Button variant="outline" size="sm" className="h-7 gap-1.5 text-xs" onClick={handleExportCsv}>
@@ -1106,7 +1175,7 @@ export default function Home() {
               <Alert className="py-2 border-amber-200 bg-amber-50 dark:bg-amber-900/10">
                 <AlertTriangle className="w-4 h-4 text-amber-600" />
                 <AlertDescription className="text-xs text-amber-700 dark:text-amber-400 ml-1">
-                  Large wiki ({result.totalCount.toLocaleString()} nodes). Tree view is disabled for performance — use Table View with search/filter instead. CSV export includes all nodes.
+                  Large wiki ({effectiveResult!.totalCount.toLocaleString()} nodes). Tree view is disabled for performance — use Table View with search/filter instead. CSV export includes all nodes.
                 </AlertDescription>
               </Alert>
             )}
@@ -1136,7 +1205,7 @@ export default function Home() {
                       <div className="flex flex-col items-center gap-3 py-10 text-center">
                         <AlertTriangle className="w-8 h-8 text-amber-500" />
                         <div>
-                          <p className="text-sm font-medium">Tree view may be slow for {result.totalCount.toLocaleString()} nodes</p>
+                          <p className="text-sm font-medium">Tree view may be slow for {effectiveResult!.totalCount.toLocaleString()} nodes</p>
                           <p className="text-xs text-muted-foreground mt-1">Use the search box above to filter, or switch to Table View for better performance.</p>
                         </div>
                         <Button variant="outline" size="sm" className="text-xs" onClick={() => setActiveTab("table")}>
@@ -1147,7 +1216,7 @@ export default function Home() {
                         </Button>
                       </div>
                     ) : (
-                      <WikiTreeView tree={result.tree} searchQuery={searchQuery} />
+                      <WikiTreeView tree={effectiveResult!.tree} searchQuery={searchQuery} />
                     )}
                   </CardContent>
                 </Card>
@@ -1157,7 +1226,7 @@ export default function Home() {
                 <Card className="shadow-sm">
                   <CardContent className="pt-4 pb-4" style={{ minHeight: "500px" }}>
                     <WikiTable
-                      nodes={result.nodes}
+                      nodes={effectiveResult!.nodes}
                       searchQuery={searchQuery}
                       onSearchChange={setSearchQuery}
                       authInfo={{
@@ -1204,6 +1273,8 @@ export default function Home() {
               </div>
             </CardContent>
           </Card>
+        )}
+        </>
         )}
       </main>
 
