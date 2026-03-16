@@ -29,6 +29,7 @@ import { getDb } from "./db";
 import { crawlNodes, crawlSessions } from "../drizzle/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import archiver from "archiver";
+import { getInMemorySession } from "./inMemorySessionStore";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -134,6 +135,7 @@ async function createExportTask(
     throw new Error("Create export task: no ticket returned");
   }
 
+  console.log(`[DocExport] Created export task: ticket=${ticket}, objToken=${objToken}, objType=${objType}, format=${fileExtension}`);
   return ticket;
 }
 
@@ -151,6 +153,8 @@ async function pollExportTask(
   const url = `${apiBase}/open-apis/drive/v1/export_tasks/${encodeURIComponent(ticket)}?token=${encodeURIComponent(objToken)}`;
   const startTime = Date.now();
   const POLL_INTERVAL_MS = 2000;
+  let successWithoutTokenCount = 0;
+  const MAX_SUCCESS_WITHOUT_TOKEN = 5; // After 5 consecutive job_status=2 with no file_token, give up
 
   while (Date.now() - startTime < maxWaitMs) {
     await sleep(POLL_INTERVAL_MS);
@@ -182,19 +186,39 @@ async function pollExportTask(
     };
 
     if (json.code !== 0) {
+      console.warn(`[DocExport] Poll API error for ticket=${ticket}: code=${json.code} msg=${json.msg}`);
       throw new Error(`Poll export task API error ${json.code}: ${json.msg}`);
     }
 
     const result = json.data?.result;
-    if (!result) continue;
+    if (!result) {
+      console.log(`[DocExport] Poll ticket=${ticket}: no result yet, raw data=${JSON.stringify(json.data)}`);
+      continue;
+    }
+    console.log(`[DocExport] Poll ticket=${ticket}: job_status=${result.job_status}, file_token=${result.file_token ?? 'none'}`);
 
     // job_status: 0=init, 1=processing, 2=success, 3=failed
     if (result.job_status === 3) {
       throw new Error(`Export task failed: ${result.job_error_msg ?? "unknown error"}`);
     }
 
-    if (result.job_status === 2 && result.file_token) {
+    // Accept any state that has a valid file_token
+    if (result.file_token) {
       return result.file_token;
+    }
+
+    // job_status=2 means "success" but if file_token is empty, the export
+    // likely completed without producing a file (unsupported content, too large, etc.)
+    // Give it a few more polls in case file_token arrives late, then fail.
+    if (result.job_status === 2) {
+      successWithoutTokenCount++;
+      console.warn(`[DocExport] ticket=${ticket}: job_status=2 (success) but no file_token (attempt ${successWithoutTokenCount}/${MAX_SUCCESS_WITHOUT_TOKEN})`);
+      if (successWithoutTokenCount >= MAX_SUCCESS_WITHOUT_TOKEN) {
+        throw new Error(
+          `Export task completed (job_status=2) but no file_token was returned after ${MAX_SUCCESS_WITHOUT_TOKEN} checks. ` +
+          `The document may be too large or contain unsupported content for this format.`
+        );
+      }
     }
 
     // Still processing (0 or 1), continue polling
@@ -204,14 +228,15 @@ async function pollExportTask(
 }
 
 /**
- * Step 3: Download the exported file bytes.
+ * Step 3: Download the exported file bytes using the file_token.
+ * Feishu API: GET /open-apis/drive/v1/export_tasks/file/{file_token}/download
  */
 async function downloadExportFile(
-  ticket: string,
+  fileToken: string,
   accessToken: string,
   apiBase: string
 ): Promise<Buffer> {
-  const url = `${apiBase}/open-apis/drive/v1/export_tasks/${encodeURIComponent(ticket)}/download`;
+  const url = `${apiBase}/open-apis/drive/v1/export_tasks/file/${encodeURIComponent(fileToken)}/download`;
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -241,11 +266,11 @@ async function exportSingleDoc(
   // Step 1: Create task
   const ticket = await createExportTask(objToken, objType, format, accessToken, apiBase);
 
-  // Step 2: Poll until done
-  await pollExportTask(ticket, objToken, accessToken, apiBase);
+  // Step 2: Poll until done, get file_token
+  const fileToken = await pollExportTask(ticket, objToken, accessToken, apiBase);
 
-  // Step 3: Download
-  const fileBytes = await downloadExportFile(ticket, accessToken, apiBase);
+  // Step 3: Download using file_token
+  const fileBytes = await downloadExportFile(fileToken, accessToken, apiBase);
   return fileBytes;
 }
 
@@ -375,26 +400,50 @@ export function registerWikiDocExportRoute(app: Express) {
       return;
     }
 
+    let apiBase = "https://open.feishu.cn";
+    let allNodes: Array<{
+      objToken: string | null;
+      objType: string | null;
+      title: string | null;
+    }>;
+
     const db = await getDb();
-    if (!db) {
-      res.status(500).json({ error: "Database not available" });
-      return;
+    if (db) {
+      const sessions = await db
+        .select()
+        .from(crawlSessions)
+        .where(eq(crawlSessions.id, sessionId))
+        .limit(1);
+
+      if (sessions.length === 0) {
+        res.status(404).json({ error: `Session ${sessionId} not found` });
+        return;
+      }
+
+      apiBase = sessions[0].apiBase ?? "https://open.feishu.cn";
+
+      allNodes = await db
+        .select()
+        .from(crawlNodes)
+        .where(
+          and(
+            eq(crawlNodes.sessionId, sessionId),
+            inArray(crawlNodes.objType, ["docx", "doc"])
+          )
+        );
+    } else {
+      // Try in-memory session store
+      const memSession = getInMemorySession(sessionId);
+      if (!memSession) {
+        res.status(404).json({ error: `Session ${sessionId} not found (no database configured)` });
+        return;
+      }
+
+      apiBase = memSession.apiBase;
+      allNodes = memSession.nodes.filter(
+        (n) => n.objType === "docx" || n.objType === "doc"
+      );
     }
-
-    // Get session to find apiBase
-    const sessions = await db
-      .select()
-      .from(crawlSessions)
-      .where(eq(crawlSessions.id, sessionId))
-      .limit(1);
-
-    if (sessions.length === 0) {
-      res.status(404).json({ error: `Session ${sessionId} not found` });
-      return;
-    }
-
-    const session = sessions[0];
-    const apiBase = session.apiBase ?? "https://open.feishu.cn";
 
     // Resolve access token
     let accessToken: string;
@@ -405,17 +454,6 @@ export function registerWikiDocExportRoute(app: Express) {
       res.status(401).json({ error: msg });
       return;
     }
-
-    // Get all docx AND doc nodes from this session (both support docx/pdf export)
-    const allNodes = await db
-      .select()
-      .from(crawlNodes)
-      .where(
-        and(
-          eq(crawlNodes.sessionId, sessionId),
-          inArray(crawlNodes.objType, ["docx", "doc"])
-        )
-      );
 
     if (allNodes.length === 0) {
       res.status(404).json({ error: "No exportable document nodes (docx/doc) found in this session" });
@@ -444,6 +482,11 @@ export function registerWikiDocExportRoute(app: Express) {
         objType: n.objType ?? "docx",
         title: n.title ?? "Untitled",
       }));
+
+    console.log(`[DocExport] Starting ${exportFormat} export: ${exportNodes.length} nodes from session ${sessionId}, apiBase=${apiBase}`);
+    if (exportNodes.length > 0) {
+      console.log(`[DocExport] First node: objToken=${exportNodes[0].objToken}, objType=${exportNodes[0].objType}, title=${exportNodes[0].title}`);
+    }
 
     // Start background export
     runDocExportJob(job, exportNodes, accessToken, apiBase).catch((err: unknown) => {

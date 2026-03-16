@@ -23,6 +23,7 @@ import { getDb } from "./db";
 import { crawlNodes, crawlSessions } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 import archiver from "archiver";
+import { getInMemorySession } from "./inMemorySessionStore";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -297,26 +298,48 @@ export function registerWikiExportRoute(app: Express) {
       return;
     }
 
+    let apiBase = "https://open.feishu.cn";
+    let allNodes: Array<{
+      nodeToken: string;
+      parentNodeToken: string | null | undefined;
+      objToken: string | null;
+      objType: string | null | undefined;
+      title: string | null | undefined;
+      depth: number;
+      url: string | null;
+    }>;
+
     const db = await getDb();
-    if (!db) {
-      res.status(500).json({ error: "Database not available" });
-      return;
+    if (db) {
+      // Get session from DB
+      const sessions = await db
+        .select()
+        .from(crawlSessions)
+        .where(eq(crawlSessions.id, sessionId))
+        .limit(1);
+
+      if (sessions.length === 0) {
+        res.status(404).json({ error: `Session ${sessionId} not found` });
+        return;
+      }
+
+      apiBase = sessions[0].apiBase ?? "https://open.feishu.cn";
+
+      allNodes = await db
+        .select()
+        .from(crawlNodes)
+        .where(eq(crawlNodes.sessionId, sessionId));
+    } else {
+      // Try in-memory session store
+      const memSession = getInMemorySession(sessionId);
+      if (!memSession) {
+        res.status(404).json({ error: `Session ${sessionId} not found (no database configured)` });
+        return;
+      }
+
+      apiBase = memSession.apiBase;
+      allNodes = memSession.nodes;
     }
-
-    // Get session
-    const sessions = await db
-      .select()
-      .from(crawlSessions)
-      .where(eq(crawlSessions.id, sessionId))
-      .limit(1);
-
-    if (sessions.length === 0) {
-      res.status(404).json({ error: `Session ${sessionId} not found` });
-      return;
-    }
-
-    const session = sessions[0];
-    const apiBase = session.apiBase ?? "https://open.feishu.cn";
 
     // Resolve access token
     let accessToken: string;
@@ -327,12 +350,6 @@ export function registerWikiExportRoute(app: Express) {
       res.status(401).json({ error: msg });
       return;
     }
-
-    // Get ALL nodes (not just docx) to build the full tree for path computation
-    const allNodes = await db
-      .select()
-      .from(crawlNodes)
-      .where(eq(crawlNodes.sessionId, sessionId));
 
     // Filter to exportable nodes (docx only for markdown)
     const exportableNodes = allNodes.filter(

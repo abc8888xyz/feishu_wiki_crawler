@@ -28,6 +28,7 @@ import {
   FileType,
   FileType2,
   History,
+  Copy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -416,13 +417,13 @@ function ExportProgressCard({
   description: string;
 }) {
   return (
-    <Card className={cn("shadow-sm", color === "violet" && "border-violet-200 dark:border-violet-800", color === "blue" && "border-blue-200 dark:border-blue-800", color === "rose" && "border-rose-200 dark:border-rose-800")}>
+    <Card className={cn("shadow-sm", color === "violet" && "border-violet-200 dark:border-violet-800", color === "blue" && "border-blue-200 dark:border-blue-800", color === "rose" && "border-rose-200 dark:border-rose-800", color === "emerald" && "border-emerald-200 dark:border-emerald-800")}>
       <CardContent className="py-3 px-4">
         <div className="flex items-center gap-3">
-          <Loader2 className={cn("w-4 h-4 animate-spin shrink-0", color === "violet" && "text-violet-600", color === "blue" && "text-blue-600", color === "rose" && "text-rose-600")} />
+          <Loader2 className={cn("w-4 h-4 animate-spin shrink-0", color === "violet" && "text-violet-600", color === "blue" && "text-blue-600", color === "rose" && "text-rose-600", color === "emerald" && "text-emerald-600")} />
           <div className="flex-1 min-w-0">
             <div className="flex justify-between text-xs mb-1.5">
-              <span className={cn("font-medium", color === "violet" && "text-violet-700 dark:text-violet-400", color === "blue" && "text-blue-700 dark:text-blue-400", color === "rose" && "text-rose-700 dark:text-rose-400")}>
+              <span className={cn("font-medium", color === "violet" && "text-violet-700 dark:text-violet-400", color === "blue" && "text-blue-700 dark:text-blue-400", color === "rose" && "text-rose-700 dark:text-rose-400", color === "emerald" && "text-emerald-700 dark:text-emerald-400")}>
                 Exporting {label} files...
               </span>
               <span className="text-muted-foreground">
@@ -617,6 +618,29 @@ export default function Home() {
     jobId: null, status: "idle", progress: { done: 0, total: 0, failed: 0 }, error: null,
   });
 
+  // ─── Clone to LarkSuite State ─────────────────────────────────────────────
+  interface CloneState {
+    jobId: string | null;
+    status: "idle" | "running" | "done" | "failed";
+    progress: { done: number; total: number; failed: number; skipped: number };
+    currentStep: string;
+    error: string | null;
+    errors: Array<{ title: string; error: string }>;
+  }
+  const [cloneState, setCloneState] = useState<CloneState>({
+    jobId: null, status: "idle",
+    progress: { done: 0, total: 0, failed: 0, skipped: 0 },
+    currentStep: "", error: null, errors: [],
+  });
+  const [targetSpaceId, setTargetSpaceId] = useState("");
+  const [targetAccessToken, setTargetAccessToken] = useState("");
+  const [showTargetToken, setShowTargetToken] = useState(false);
+  const [showClonePanel, setShowClonePanel] = useState(false);
+  const clonePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stopClonePoll = useCallback(() => {
+    if (clonePollRef.current) { clearInterval(clonePollRef.current); clonePollRef.current = null; }
+  }, []);
+
   const docxPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pdfPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -627,7 +651,7 @@ export default function Home() {
     if (pdfPollRef.current) { clearInterval(pdfPollRef.current); pdfPollRef.current = null; }
   }, []);
 
-  useEffect(() => () => { stopDocxPoll(); stopPdfPoll(); }, [stopDocxPoll, stopPdfPoll]);
+  useEffect(() => () => { stopDocxPoll(); stopPdfPoll(); stopClonePoll(); }, [stopDocxPoll, stopPdfPoll, stopClonePoll]);
 
   const handleExportDoc = useCallback(async (format: DocExportFormat) => {
     if (!result?.sessionId) return; // doc export requires live session
@@ -699,6 +723,77 @@ export default function Home() {
     a.href = `/api/wiki/export-doc/download?jobId=${encodeURIComponent(jobId)}`;
     a.click();
   }, [docxExport.jobId, pdfExport.jobId]);
+
+  // ─── Clone to LarkSuite Handler ──────────────────────────────────────────
+  const handleCloneToLark = useCallback(async () => {
+    if (!result?.sessionId) return;
+    if (!targetSpaceId.trim() || !targetAccessToken.trim()) return;
+
+    setCloneState({
+      jobId: null, status: "running",
+      progress: { done: 0, total: 0, failed: 0, skipped: 0 },
+      currentStep: "Starting...", error: null, errors: [],
+    });
+
+    try {
+      const body: Record<string, string> = {
+        sessionId: String(result.sessionId),
+        targetSpaceId: targetSpaceId.trim(),
+        targetAccessToken: targetAccessToken.trim(),
+        sourceAccessToken: userToken.trim(),
+      };
+
+      const startRes = await fetch("/api/wiki/clone-to-lark/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const startData = await startRes.json() as { jobId?: string; total?: number; skipped?: number; error?: string };
+      if (!startRes.ok || !startData.jobId) {
+        throw new Error(startData.error ?? "Failed to start clone");
+      }
+
+      const jobId = startData.jobId;
+      setCloneState(prev => ({
+        ...prev, jobId,
+        progress: { done: 0, total: startData.total ?? 0, failed: 0, skipped: startData.skipped ?? 0 },
+      }));
+
+      // Poll status every 5 seconds (clone takes longer per node)
+      stopClonePoll();
+      clonePollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/wiki/clone-to-lark/status?jobId=${encodeURIComponent(jobId)}`);
+          const s = await statusRes.json() as {
+            status: string; done: number; total: number; failed: number; skipped: number;
+            currentStep: string; errorMsg?: string; errors?: Array<{ title: string; error: string }>;
+          };
+          setCloneState(prev => ({
+            ...prev,
+            progress: { done: s.done, total: s.total, failed: s.failed, skipped: s.skipped },
+            currentStep: s.currentStep ?? "",
+          }));
+
+          if (s.status === "done") {
+            stopClonePoll();
+            setCloneState(prev => ({ ...prev, status: "done", errors: s.errors ?? [] }));
+          } else if (s.status === "failed") {
+            stopClonePoll();
+            setCloneState(prev => ({
+              ...prev, status: "failed",
+              error: s.errorMsg ?? "Clone failed",
+              errors: s.errors ?? [],
+            }));
+          }
+        } catch (e) {
+          console.warn("[Clone] Poll error:", e);
+        }
+      }, 5000);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setCloneState(prev => ({ ...prev, status: "failed", error: msg }));
+    }
+  }, [result, targetSpaceId, targetAccessToken, userToken, stopClonePoll]);
 
   // Effective result: either from live crawl or loaded from history
   const effectiveResult = result ?? (historyLoadedResult ? {
@@ -1095,8 +1190,83 @@ export default function Home() {
                     <Download className="w-3 h-3" /> Re-DL
                   </Button>
                 )}
+
+                {/* Clone to LarkSuite */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs border-emerald-300 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700 dark:text-emerald-400 disabled:opacity-50"
+                  onClick={() => setShowClonePanel(!showClonePanel)}
+                  disabled={cloneState.status === "running" || isExportDisabled}
+                  title={isExportDisabled ? "Clone requires User Access Token." : "Clone all documents to a LarkSuite wiki space"}
+                >
+                  {cloneState.status === "running" ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Copy className="w-3 h-3" />
+                  )}
+                  {cloneState.status === "running"
+                    ? `Cloning... ${cloneState.progress.done}/${cloneState.progress.total}`
+                    : cloneState.status === "done"
+                    ? "Cloned ✓"
+                    : "Clone to Lark"}
+                </Button>
               </div>
             </div>
+
+            {/* Clone to LarkSuite Config Panel */}
+            {showClonePanel && !isExportDisabled && (
+              <Card className="shadow-sm border-emerald-200 dark:border-emerald-800">
+                <CardContent className="py-3 px-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Copy className="w-4 h-4 text-emerald-600" />
+                    <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400">Clone to LarkSuite</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Clone all docx/doc pages to a LarkSuite wiki space. Source token reused from above. Only docx/doc nodes are cloned; other types (sheet, mindnote, etc.) are skipped.
+                  </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label className="text-xs">Target LarkSuite Space ID</Label>
+                      <Input
+                        placeholder="e.g. 7xxxxxxxxxxxxxx"
+                        value={targetSpaceId}
+                        onChange={e => setTargetSpaceId(e.target.value)}
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label className="text-xs">Target User Access Token</Label>
+                      <div className="relative">
+                        <Input
+                          type={showTargetToken ? "text" : "password"}
+                          placeholder="u-xxxxxxxxxxxxxxxx"
+                          value={targetAccessToken}
+                          onChange={e => setTargetAccessToken(e.target.value)}
+                          className="h-8 text-xs pr-8"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowTargetToken(!showTargetToken)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showTargetToken ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    className="h-8 gap-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white"
+                    onClick={handleCloneToLark}
+                    disabled={cloneState.status === "running" || !targetSpaceId.trim() || !targetAccessToken.trim()}
+                  >
+                    {cloneState.status === "running" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Copy className="w-3 h-3" />}
+                    Start Clone
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Export requires User Token warning */}
             {isExportDisabled && result && (
@@ -1189,6 +1359,70 @@ export default function Home() {
                 <AlertDescription className="text-xs ml-1">
                   <strong>PDF export failed:</strong> {pdfExport.error}
                   <Button variant="link" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={() => handleExportDoc("pdf")}>Retry</Button>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Clone Progress */}
+            {cloneState.status === "running" && (
+              <Card className="shadow-sm border-emerald-200 dark:border-emerald-800">
+                <CardContent className="py-3 px-4">
+                  <div className="flex items-center gap-3">
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0 text-emerald-600" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex justify-between text-xs mb-1.5">
+                        <span className="font-medium text-emerald-700 dark:text-emerald-400">
+                          Cloning to LarkSuite...
+                        </span>
+                        <span className="text-muted-foreground">
+                          {cloneState.progress.done}/{cloneState.progress.total} docs
+                          {cloneState.progress.failed > 0 ? ` · ${cloneState.progress.failed} failed` : ""}
+                          {cloneState.progress.skipped > 0 ? ` · ${cloneState.progress.skipped} skipped` : ""}
+                        </span>
+                      </div>
+                      <Progress
+                        value={cloneState.progress.total > 0 ? Math.round((cloneState.progress.done / cloneState.progress.total) * 100) : 0}
+                        className="h-1.5"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    <Copy className="w-3 h-3 inline mr-1" />
+                    {cloneState.currentStep}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Clone Done */}
+            {cloneState.status === "done" && (
+              <Alert className="py-2 border-emerald-200 bg-emerald-50 dark:bg-emerald-900/10">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <AlertDescription className="text-xs text-emerald-700 dark:text-emerald-400 ml-1">
+                  <strong>Clone complete!</strong> {cloneState.progress.done - cloneState.progress.failed} docs cloned
+                  {cloneState.progress.failed > 0 ? `, ${cloneState.progress.failed} failed` : ""}
+                  {cloneState.progress.skipped > 0 ? `, ${cloneState.progress.skipped} non-doc nodes skipped` : ""}
+                  {cloneState.errors.length > 0 && (
+                    <details className="mt-1">
+                      <summary className="cursor-pointer text-emerald-600 hover:underline">View errors ({cloneState.errors.length})</summary>
+                      <ul className="mt-1 space-y-0.5 text-red-600 dark:text-red-400">
+                        {cloneState.errors.map((e, i) => (
+                          <li key={i}><strong>{e.title}:</strong> {e.error}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Clone Error */}
+            {cloneState.status === "failed" && cloneState.error && (
+              <Alert variant="destructive" className="py-2">
+                <AlertCircle className="w-4 h-4" />
+                <AlertDescription className="text-xs ml-1">
+                  <strong>Clone failed:</strong> {cloneState.error}
+                  <Button variant="link" size="sm" className="h-auto p-0 ml-2 text-xs" onClick={handleCloneToLark}>Retry</Button>
                 </AlertDescription>
               </Alert>
             )}

@@ -8,6 +8,7 @@ import { registerChatRoutes } from "./chat";
 import { registerWikiCrawlRoute } from "../wikiCrawlRoute";
 import { registerWikiExportRoute } from "../wikiExportRoute";
 import { registerWikiDocExportRoute } from "../wikiDocExportRoute";
+import { registerWikiCloneRoute } from "../wikiCloneRoute";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
@@ -47,6 +48,8 @@ async function startServer() {
   registerWikiExportRoute(app);
   // Wiki export to Docx/PDF ZIP
   registerWikiDocExportRoute(app);
+  // Clone Feishu wiki to LarkSuite
+  registerWikiCloneRoute(app);
   // tRPC API
   app.use(
     "/api/trpc",

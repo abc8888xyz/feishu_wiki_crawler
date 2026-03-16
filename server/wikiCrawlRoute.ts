@@ -26,6 +26,7 @@ import {
   getTenantAccessToken,
   getWikiNodeInfo,
   buildTree,
+  fetchAllNodes,
 } from "./feishuApi";
 import {
   createCrawlSession,
@@ -33,6 +34,8 @@ import {
   getSession,
   getSessionNodes,
 } from "./crawlEngine";
+import { getDb } from "./db";
+import { createInMemorySession } from "./inMemorySessionStore";
 
 // ─── In-memory background job tracker ────────────────────────────────────────
 // Tracks which sessions are currently running so we don't double-start them
@@ -135,6 +138,14 @@ export function registerWikiCrawlRoute(app: Express) {
     // crawlMode='subtree' → only crawl children of the specific node in the URL
     // crawlMode='space' (default) → crawl entire wiki space from root
     const rootNodeToken = crawlMode === 'subtree' ? parsed.token : undefined;
+
+    const db = await getDb();
+    if (!db) {
+      // No DB: return error suggesting to use SSE endpoint which handles in-memory mode
+      res.status(503).json({ error: "Database not configured. Crawl will use in-memory mode via SSE." });
+      return;
+    }
+
     const sessionId = await createCrawlSession(spaceId, parsed.domain, rootNodeToken, apiBase);
     startBackgroundCrawl(sessionId, accessToken);
 
@@ -298,91 +309,155 @@ export function registerWikiCrawlRoute(app: Express) {
       // crawlMode='subtree' → only crawl children of the specific node in the URL
       const { crawlMode } = req.query as Record<string, string>;
       const rootNodeToken = crawlMode === 'subtree' ? parsed.token : undefined;
-      const sessionId = await createCrawlSession(spaceId, parsed.domain, rootNodeToken);
-      sendEvent({ type: "session", sessionId });
-      sendEvent({ type: "progress", count: 0, pending: 1, message: "Starting background crawl..." });
 
-      // Start background crawl
-      startBackgroundCrawl(sessionId, accessToken);
+      const db = await getDb();
 
-      // Poll for progress and stream updates
-      let lastCount = 0;
-      let done = false;
-      const pollInterval = setInterval(async () => {
-        try {
-          const session = await getSession(sessionId);
-          if (!session) return;
+      if (db) {
+        // ─── DB available: use persistent crawl engine ─────────────────────
+        const sessionId = await createCrawlSession(spaceId, parsed.domain, rootNodeToken);
+        sendEvent({ type: "session", sessionId });
+        sendEvent({ type: "progress", count: 0, pending: 1, message: "Starting background crawl..." });
 
-          if (session.totalNodes !== lastCount) {
-            lastCount = session.totalNodes;
-            sendEvent({
-              type: "progress",
-              count: session.totalNodes,
-              pending: session.pendingQueue,
-              message: `Fetching nodes... ${session.totalNodes} found (${session.pendingQueue} pending)`,
-            });
-          }
+        startBackgroundCrawl(sessionId, accessToken);
 
-          if (session.status === "done" || session.status === "failed" || session.status === "paused") {
-            done = true;
-            clearInterval(pollInterval);
+        let lastCount = 0;
+        let done = false;
+        const pollInterval = setInterval(async () => {
+          try {
+            const session = await getSession(sessionId);
+            if (!session) return;
 
-            if (session.status === "done") {
-              const nodes = await getSessionNodes(sessionId);
-              const treeAvailable = nodes.length <= 5000;
-              const tree = treeAvailable ? buildTree(nodes) : [];
+            if (session.totalNodes !== lastCount) {
+              lastCount = session.totalNodes;
               sendEvent({
-                type: "done",
-                sessionId,
-                spaceId: session.spaceId,
-                domain: session.domain,
-                totalCount: nodes.length,
-                skipped: session.skippedNodes,
-                nodes,
-                tree,
-                treeAvailable,
-              });
-            } else if (session.status === "paused") {
-              sendEvent({
-                type: "paused",
-                sessionId,
-                totalCount: session.totalNodes,
+                type: "progress",
+                count: session.totalNodes,
                 pending: session.pendingQueue,
-                message: "Token expired mid-crawl. Get a new token and click Resume to continue.",
+                message: `Fetching nodes... ${session.totalNodes} found (${session.pendingQueue} pending)`,
               });
-            } else {
-              sendEvent({ type: "error", message: session.errorMsg ?? "Crawl failed" });
             }
 
+            if (session.status === "done" || session.status === "failed" || session.status === "paused") {
+              done = true;
+              clearInterval(pollInterval);
+
+              if (session.status === "done") {
+                const nodes = await getSessionNodes(sessionId);
+                const treeAvailable = nodes.length <= 5000;
+                const tree = treeAvailable ? buildTree(nodes) : [];
+                sendEvent({
+                  type: "done",
+                  sessionId,
+                  spaceId: session.spaceId,
+                  domain: session.domain,
+                  totalCount: nodes.length,
+                  skipped: session.skippedNodes,
+                  nodes,
+                  tree,
+                  treeAvailable,
+                });
+              } else if (session.status === "paused") {
+                sendEvent({
+                  type: "paused",
+                  sessionId,
+                  totalCount: session.totalNodes,
+                  pending: session.pendingQueue,
+                  message: "Token expired mid-crawl. Get a new token and click Resume to continue.",
+                });
+              } else {
+                sendEvent({ type: "error", message: session.errorMsg ?? "Crawl failed" });
+              }
+
+              res.end();
+            }
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[Wiki] Poll error for session ${sessionId}: ${msg}`);
+          }
+        }, 2000);
+
+        const safetyTimeout = setTimeout(async () => {
+          if (!done) {
+            clearInterval(pollInterval);
+            const session = await getSession(sessionId);
+            sendEvent({
+              type: "paused",
+              sessionId,
+              totalCount: session?.totalNodes ?? 0,
+              pending: session?.pendingQueue ?? 0,
+              message: `Connection timeout after 25 minutes. The crawl is still running in background. Use session ID ${sessionId} to check status.`,
+            });
             res.end();
           }
+        }, 25 * 60 * 1000);
+
+        req.on("close", () => {
+          clearInterval(pollInterval);
+          clearTimeout(safetyTimeout);
+        });
+      } else {
+        // ─── No DB: in-memory crawl via fetchAllNodes ──────────────────────
+        sendEvent({ type: "progress", count: 0, pending: 0, message: "Starting crawl (in-memory mode, no persistence)..." });
+
+        try {
+          const allNodes = await fetchAllNodes(
+            spaceId,
+            accessToken,
+            parsed.domain,
+            rootNodeToken,
+            0,
+            (count) => {
+              sendEvent({
+                type: "progress",
+                count,
+                pending: 0,
+                message: `Fetching nodes... ${count} found`,
+              });
+            },
+            parsed.apiBase
+          );
+
+          // Store in memory so export routes can access the nodes
+          const memSessionId = createInMemorySession(
+            spaceId,
+            parsed.domain,
+            parsed.apiBase,
+            allNodes.map((n) => ({
+              nodeToken: n.node_token,
+              parentNodeToken: n.parent_node_token ?? null,
+              objToken: n.obj_token ?? null,
+              objType: n.obj_type ?? null,
+              title: n.title ?? "Untitled",
+              depth: (n as any).depth ?? 0,
+              url: (n as any).url ?? "",
+            }))
+          );
+
+          const treeAvailable = allNodes.length <= 5000;
+          const tree = treeAvailable ? buildTree(allNodes) : [];
+          sendEvent({
+            type: "done",
+            sessionId: memSessionId,
+            spaceId,
+            domain: parsed.domain,
+            totalCount: allNodes.length,
+            skipped: 0,
+            nodes: allNodes,
+            tree,
+            treeAvailable,
+          });
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
-          console.error(`[Wiki] Poll error for session ${sessionId}: ${msg}`);
+          if (msg.includes("TOKEN_EXPIRED")) {
+            sendEvent({ type: "error", message: "Your User Access Token has expired. Please get a new token." });
+          } else {
+            sendEvent({ type: "error", message: `Crawl failed: ${msg}` });
+          }
         }
-      }, 2000);
 
-      // Safety timeout: close SSE after 25 minutes, send paused state
-      const safetyTimeout = setTimeout(async () => {
-        if (!done) {
-          clearInterval(pollInterval);
-          const session = await getSession(sessionId);
-          sendEvent({
-            type: "paused",
-            sessionId,
-            totalCount: session?.totalNodes ?? 0,
-            pending: session?.pendingQueue ?? 0,
-            message: `Connection timeout after 25 minutes. The crawl is still running in background. Use session ID ${sessionId} to check status.`,
-          });
-          res.end();
-        }
-      }, 25 * 60 * 1000);
-
-      // Cleanup on client disconnect
-      req.on("close", () => {
-        clearInterval(pollInterval);
-        clearTimeout(safetyTimeout);
-      });
+        clearInterval(keepAlive);
+        res.end();
+      }
 
       return; // Don't fall through to finally
     } catch (err: unknown) {
