@@ -56,6 +56,36 @@ async function resolveAccessToken(
   throw new Error("Authentication required. Please provide either App credentials or a User Access Token.");
 }
 
+/**
+ * Resolve multiple access tokens from request.
+ * Supports: userAccessTokens (array/newline-separated string) or single userAccessToken.
+ * Returns array of valid tokens.
+ */
+function resolveMultipleTokens(
+  userAccessToken?: string,
+  userAccessTokens?: string | string[]
+): string[] {
+  const tokens: string[] = [];
+
+  // Parse userAccessTokens (can be array or newline/comma-separated string)
+  if (userAccessTokens) {
+    if (Array.isArray(userAccessTokens)) {
+      tokens.push(...userAccessTokens);
+    } else {
+      tokens.push(...userAccessTokens.split(/[\n,]+/));
+    }
+  }
+
+  // Fallback to single token
+  if (userAccessToken) {
+    tokens.push(userAccessToken);
+  }
+
+  // Deduplicate and clean
+  const cleaned = Array.from(new Set(tokens.map(t => t.trim()).filter(t => t.length > 0)));
+  return cleaned;
+}
+
 async function resolveSpaceId(token: string, accessToken: string, apiBase = "https://open.feishu.cn"): Promise<string> {
   try {
     const nodeInfo = await getWikiNodeInfo(token, accessToken, apiBase);
@@ -91,6 +121,36 @@ function startBackgroundCrawl(sessionId: number, accessToken: string) {
 }
 
 export function registerWikiCrawlRoute(app: Express) {
+  // ─── Batch token: get tenant_access_token for multiple apps at once ──────
+
+  app.post("/api/wiki/batch-token", async (req: Request, res: Response) => {
+    const { apps, apiBase: reqApiBase } = req.body as {
+      apps: Array<{ appId: string; appSecret: string; name?: string }>;
+      apiBase?: string;
+    };
+
+    if (!apps || !Array.isArray(apps) || apps.length === 0) {
+      res.status(400).json({ error: "Missing apps array. Each item needs { appId, appSecret }." });
+      return;
+    }
+
+    const apiBase = reqApiBase || "https://open.larksuite.com";
+    const results = await Promise.all(
+      apps.map(async (app, i) => {
+        try {
+          const token = await getTenantAccessToken(app.appId.trim(), app.appSecret.trim(), apiBase);
+          return { index: i, name: app.name || app.appId, token, ok: true };
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return { index: i, name: app.name || app.appId, token: null, ok: false, error: msg };
+        }
+      })
+    );
+
+    const tokens = results.filter(r => r.ok).map(r => r.token as string);
+    res.json({ results, tokens, total: apps.length, success: tokens.length });
+  });
+
   // ─── Start new crawl (background) ────────────────────────────────────────
 
   app.post("/api/wiki/crawl/start", async (req: Request, res: Response) => {
@@ -259,7 +319,7 @@ export function registerWikiCrawlRoute(app: Express) {
   // ─── Legacy SSE endpoint (kept for backward compat, but uses background crawl) ──
 
   app.get("/api/wiki/crawl-stream", async (req: Request, res: Response) => {
-    const { url, userAccessToken, appId, appSecret } = req.query as Record<string, string>;
+    const { url, userAccessToken, userAccessTokens, appId, appSecret } = req.query as Record<string, string>;
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
@@ -284,9 +344,21 @@ export function registerWikiCrawlRoute(app: Express) {
 
       sendEvent({ type: "progress", count: 0, pending: 0, message: "Authenticating..." });
 
+      // Resolve tokens: support multiple user access tokens for parallel crawling
+      const multiTokens = resolveMultipleTokens(userAccessToken, userAccessTokens);
       let accessToken: string;
+      let allTokens: string[];
       try {
-        accessToken = await resolveAccessToken(userAccessToken, appId, appSecret);
+        if (multiTokens.length > 0) {
+          accessToken = multiTokens[0]; // primary token for auth checks
+          allTokens = multiTokens;
+          if (multiTokens.length > 1) {
+            sendEvent({ type: "progress", count: 0, pending: 0, message: `Using ${multiTokens.length} tokens for accelerated crawling...` });
+          }
+        } else {
+          accessToken = await resolveAccessToken(userAccessToken, appId, appSecret);
+          allTokens = [accessToken];
+        }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         sendEvent({ type: "error", message: msg });
@@ -295,7 +367,7 @@ export function registerWikiCrawlRoute(app: Express) {
 
       let spaceId: string;
       try {
-        spaceId = await resolveSpaceId(parsed.token, accessToken);
+        spaceId = await resolveSpaceId(parsed.token, accessToken, parsed.apiBase);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         if (msg.includes("TOKEN_EXPIRED")) {
@@ -397,12 +469,13 @@ export function registerWikiCrawlRoute(app: Express) {
         });
       } else {
         // ─── No DB: in-memory crawl via fetchAllNodes ──────────────────────
-        sendEvent({ type: "progress", count: 0, pending: 0, message: "Starting crawl (in-memory mode, no persistence)..." });
+        const tokenLabel = allTokens.length > 1 ? ` with ${allTokens.length} tokens` : "";
+        sendEvent({ type: "progress", count: 0, pending: 0, message: `Starting crawl (in-memory mode${tokenLabel})...` });
 
         try {
           const allNodes = await fetchAllNodes(
             spaceId,
-            accessToken,
+            allTokens.length > 1 ? allTokens : accessToken,
             parsed.domain,
             rootNodeToken,
             0,

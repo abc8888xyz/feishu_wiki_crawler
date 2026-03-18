@@ -5,6 +5,41 @@
 
 import pLimit from "p-limit";
 
+/**
+ * Token pool for round-robin distribution across multiple access tokens.
+ * Each token gets its own rate limit budget (~10 req/s from Feishu).
+ * Using N tokens effectively multiplies throughput by N.
+ */
+export class TokenPool {
+  private tokens: string[];
+  private index = 0;
+
+  constructor(tokens: string | string[]) {
+    const list = Array.isArray(tokens) ? tokens : [tokens];
+    this.tokens = list.map(t => t.trim()).filter(t => t.length > 0);
+    if (this.tokens.length === 0) {
+      throw new Error("At least one access token is required");
+    }
+  }
+
+  /** Get next token via round-robin */
+  next(): string {
+    const token = this.tokens[this.index % this.tokens.length];
+    this.index++;
+    return token;
+  }
+
+  /** Number of tokens in the pool */
+  get size(): number {
+    return this.tokens.length;
+  }
+
+  /** Get all tokens (for validation) */
+  all(): string[] {
+    return [...this.tokens];
+  }
+}
+
 export interface FeishuNode {
   space_id: string;
   node_token: string;
@@ -258,15 +293,16 @@ export function buildNodeUrl(domain: string, node: FeishuNode): string {
  */
 async function fetchWithRetry(
   spaceId: string,
-  accessToken: string,
+  accessToken: string | TokenPool,
   parentNodeToken: string | undefined,
   maxRetries = 5,
   apiBase = "https://open.feishu.cn"
 ): Promise<FeishuNode[]> {
+  const getToken = () => accessToken instanceof TokenPool ? accessToken.next() : accessToken;
   let lastErr: Error | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await fetchAllAtLevel(spaceId, accessToken, parentNodeToken, apiBase);
+      return await fetchAllAtLevel(spaceId, getToken(), parentNodeToken, apiBase);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       // Token errors abort immediately — no retry
@@ -277,8 +313,8 @@ async function fetchWithRetry(
         const isRateLimit = RATE_LIMIT_CODES.has(
           parseInt(msg.match(/code=(\d+)/)?.[1] ?? '0')
         ) || msg.includes('frequency limit') || msg.includes('rate limit');
-        // Rate limit: 2s, 4s, 8s, 16s, 32s; Other errors: 500ms, 1s, 2s, 4s, 8s
-        const baseDelay = isRateLimit ? 2000 : 500;
+        // Rate limit: 1s, 2s, 4s, 8s, 16s; Other errors: 300ms, 600ms, 1.2s, 2.4s, 4.8s
+        const baseDelay = isRateLimit ? 1000 : 300;
         const delay = baseDelay * Math.pow(2, attempt);
         console.warn(`[Wiki] Retry ${attempt + 1}/${maxRetries} for parentToken=${parentNodeToken ?? 'root'} after ${delay}ms: ${msg}`);
         await new Promise(r => setTimeout(r, delay));
@@ -302,16 +338,21 @@ async function fetchWithRetry(
  */
 export async function fetchAllNodes(
   spaceId: string,
-  accessToken: string,
+  accessToken: string | string[],
   domain: string,
   rootNodeToken?: string,
   _depth: number = 0,
   onProgress?: (count: number) => void,
   apiBase = "https://open.feishu.cn"
 ): Promise<FeishuNode[]> {
-  // Concurrency: 5 parallel requests (balanced between speed and rate limits)
-  // Feishu rate limit: ~10 req/s per token; 5 concurrent + retry handles bursts well
-  const limit = pLimit(5);
+  // Build token pool for round-robin distribution
+  const tokenPool = new TokenPool(accessToken);
+  // Concurrency: 15 per token (Feishu allows ~100 req/min per token)
+  // With retry + backoff, 15 concurrent handles bursts well without excessive rate limiting
+  const concurrency = 15 * tokenPool.size;
+  const limit = pLimit(concurrency);
+  console.log(`[Wiki] Crawl starting with ${tokenPool.size} token(s), concurrency=${concurrency}`);
+
   const allNodes: FeishuNode[] = [];
   let skippedCount = 0;
 
@@ -325,7 +366,7 @@ export async function fetchAllNodes(
       currentLevel.map(({ parentToken, fetchSpaceId, depth }) =>
         limit(async () => {
           try {
-            const items = await fetchWithRetry(fetchSpaceId, accessToken, parentToken, 5, apiBase);
+            const items = await fetchWithRetry(fetchSpaceId, tokenPool, parentToken, 5, apiBase);
             return items.map((node) => ({
               ...node,
               depth,
@@ -352,9 +393,6 @@ export async function fetchAllNodes(
         onProgress?.(allNodes.length);
 
         if (node.has_child) {
-          // For shortcut nodes: use origin_node_token + origin_space_id to fetch children.
-          // This is the key fix: shortcut nodes point to content in another location;
-          // their children must be fetched using the origin identifiers.
           const isShortcut = node.node_type === 'shortcut';
           const childParentToken = isShortcut ? node.origin_node_token : node.node_token;
           const childSpaceId = isShortcut && node.origin_space_id ? node.origin_space_id : spaceId;

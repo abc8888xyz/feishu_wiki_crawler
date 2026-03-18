@@ -361,11 +361,17 @@ function useSseCrawl() {
     appId?: string;
     appSecret?: string;
     userAccessToken?: string;
+    userAccessTokens?: string[];
     crawlMode?: "space" | "subtree";
   }) => {
     const qs = new URLSearchParams();
     qs.set("url", params.url);
-    if (params.userAccessToken) qs.set("userAccessToken", params.userAccessToken);
+    if (params.userAccessTokens && params.userAccessTokens.length > 1) {
+      // Pass multiple tokens as comma-separated in single param
+      qs.set("userAccessTokens", params.userAccessTokens.join(","));
+    } else if (params.userAccessToken) {
+      qs.set("userAccessToken", params.userAccessToken);
+    }
     if (params.appId) qs.set("appId", params.appId);
     if (params.appSecret) qs.set("appSecret", params.appSecret);
     if (params.crawlMode) qs.set("crawlMode", params.crawlMode);
@@ -453,6 +459,44 @@ export default function Home() {
   const [userToken, setUserToken] = useState("");
   const [showSecret, setShowSecret] = useState(false);
   const [authMode, setAuthMode] = useState<"app" | "token">("app");
+  const [showBatchToken, setShowBatchToken] = useState(false);
+  const [batchAppList, setBatchAppList] = useState("");
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [batchResult, setBatchResult] = useState<{ success: number; total: number; tokens: string[] } | null>(null);
+
+  // Multi-app credentials saved to localStorage
+  type AppCred = { appId: string; appSecret: string; name: string };
+  const [savedApps, setSavedApps] = useState<AppCred[]>(() => {
+    try {
+      const stored = localStorage.getItem("feishu_crawl_apps");
+      return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+  });
+  const [showAddApp, setShowAddApp] = useState(false);
+  const [newAppName, setNewAppName] = useState("");
+
+  // Persist savedApps to localStorage
+  useEffect(() => {
+    localStorage.setItem("feishu_crawl_apps", JSON.stringify(savedApps));
+  }, [savedApps]);
+
+  const addApp = useCallback(() => {
+    if (!appId.trim() || !appSecret.trim()) return;
+    const name = newAppName.trim() || `App ${savedApps.length + 1}`;
+    setSavedApps(prev => [...prev, { appId: appId.trim(), appSecret: appSecret.trim(), name }]);
+    setNewAppName("");
+    setShowAddApp(false);
+  }, [appId, appSecret, newAppName, savedApps.length]);
+
+  const removeApp = useCallback((index: number) => {
+    setSavedApps(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // When clicking a saved app, load it into the input fields
+  const loadApp = useCallback((app: AppCred) => {
+    setAppId(app.appId);
+    setAppSecret(app.appSecret);
+  }, []);
   const [crawlMode, setCrawlMode] = useState<"space" | "subtree">("space");
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("tree");
@@ -469,18 +513,128 @@ export default function Home() {
   }, [wikiUrl]);
 
   const { crawl, resume, abort, isLoading, progressCount, progressPending, progressMessage, error, result, paused, startTime } = useSseCrawl();
+  // Extract first token from multiline textarea for single-token operations (export, resume)
+  const firstToken = useMemo(() => {
+    const tokens = userToken.split(/[\n,]+/).map(t => t.trim()).filter(t => t.length > 0);
+    return tokens[0] || "";
+  }, [userToken]);
   const testAuthMutation = trpc.wiki.testAuth.useMutation();
 
-  const handleCrawl = useCallback(() => {
+  const handleBatchToken = useCallback(async () => {
+    const lines = batchAppList.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+    const apps = lines.map(line => {
+      // Support formats: appId:appSecret or appId appSecret or appId,appSecret
+      const parts = line.split(/[:\s,]+/).filter(p => p.length > 0);
+      return { appId: parts[0] || "", appSecret: parts[1] || "", name: parts[2] || parts[0] || "" };
+    }).filter(a => a.appId && a.appSecret);
+
+    if (apps.length === 0) return;
+    setBatchLoading(true);
+    setBatchResult(null);
+    try {
+      // Detect platform from wiki URL
+      const isLark = wikiUrl.includes("larksuite.com");
+      const apiBase = isLark ? "https://open.larksuite.com" : "https://open.feishu.cn";
+      const res = await fetch("/api/wiki/batch-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apps, apiBase }),
+      });
+      const data = await res.json() as { tokens: string[]; success: number; total: number };
+      setBatchResult(data);
+      if (data.tokens.length > 0) {
+        // Append tokens to the token textarea
+        const existing = userToken.split(/[\n,]+/).map(t => t.trim()).filter(t => t.length > 0);
+        const merged = Array.from(new Set([...existing, ...data.tokens]));
+        setUserToken(merged.join("\n"));
+      }
+    } catch (err) {
+      console.error("Batch token error:", err);
+    } finally {
+      setBatchLoading(false);
+    }
+  }, [batchAppList, wikiUrl, userToken]);
+
+  const handleCrawl = useCallback(async () => {
     if (!wikiUrl.trim()) return;
-    crawl({
-      url: wikiUrl.trim(),
-      appId: authMode === "app" ? appId.trim() || undefined : undefined,
-      appSecret: authMode === "app" ? appSecret.trim() || undefined : undefined,
-      userAccessToken: authMode === "token" ? userToken.trim() || undefined : undefined,
-      crawlMode,
-    });
-  }, [wikiUrl, appId, appSecret, userToken, authMode, crawlMode, crawl]);
+
+    if (authMode === "token") {
+      // Parse multiple tokens from textarea
+      const tokens = userToken.split(/[\n,]+/).map(t => t.trim()).filter(t => t.length > 0);
+      crawl({
+        url: wikiUrl.trim(),
+        userAccessToken: tokens.length === 1 ? tokens[0] : undefined,
+        userAccessTokens: tokens.length > 1 ? tokens : undefined,
+        crawlMode,
+      });
+    } else {
+      // App credentials mode: get tokens from ALL saved apps + current input
+      const allApps: Array<{ appId: string; appSecret: string; name: string }> = [];
+
+      // Add all saved apps
+      for (const app of savedApps) {
+        allApps.push(app);
+      }
+
+      // Add current input if not already in saved list
+      if (appId.trim() && appSecret.trim()) {
+        const exists = allApps.some(a => a.appId === appId.trim());
+        if (!exists) {
+          allApps.push({ appId: appId.trim(), appSecret: appSecret.trim(), name: "Current" });
+        }
+      }
+
+      if (allApps.length === 0) {
+        crawl({ url: wikiUrl.trim(), crawlMode });
+        return;
+      }
+
+      if (allApps.length === 1) {
+        // Single app: use normal flow
+        crawl({
+          url: wikiUrl.trim(),
+          appId: allApps[0].appId,
+          appSecret: allApps[0].appSecret,
+          crawlMode,
+        });
+      } else {
+        // Multiple apps: batch get tokens first, then crawl with all tokens
+        const isLark = wikiUrl.includes("larksuite.com");
+        const apiBase = isLark ? "https://open.larksuite.com" : "https://open.feishu.cn";
+        try {
+          const res = await fetch("/api/wiki/batch-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ apps: allApps, apiBase }),
+          });
+          const data = await res.json() as { tokens: string[]; success: number; total: number };
+          if (data.tokens.length > 0) {
+            crawl({
+              url: wikiUrl.trim(),
+              userAccessTokens: data.tokens,
+              crawlMode,
+            });
+          } else {
+            // Fallback to first app
+            crawl({
+              url: wikiUrl.trim(),
+              appId: allApps[0].appId,
+              appSecret: allApps[0].appSecret,
+              crawlMode,
+            });
+          }
+        } catch {
+          // Fallback to first app on error
+          crawl({
+            url: wikiUrl.trim(),
+            appId: allApps[0].appId,
+            appSecret: allApps[0].appSecret,
+            crawlMode,
+          });
+        }
+      }
+    }
+  }, [wikiUrl, appId, appSecret, userToken, authMode, crawlMode, crawl, savedApps]);
 
   const handleResume = useCallback(() => {
     if (!paused) return;
@@ -488,9 +642,9 @@ export default function Home() {
       sessionId: paused.sessionId,
       appId: authMode === "app" ? appId.trim() || undefined : undefined,
       appSecret: authMode === "app" ? appSecret.trim() || undefined : undefined,
-      userAccessToken: authMode === "token" ? userToken.trim() || undefined : undefined,
+      userAccessToken: authMode === "token" ? firstToken || undefined : undefined,
     });
-  }, [paused, appId, appSecret, userToken, authMode, resume]);
+  }, [paused, appId, appSecret, firstToken, authMode, resume]);
 
   const handleExportCsv = useCallback(() => {
     const er = result ?? (historyLoadedResult ? { nodes: historyLoadedResult.nodes, spaceId: historyLoadedResult.spaceId } : null);
@@ -533,7 +687,7 @@ export default function Home() {
 
     try {
       const body: Record<string, string> = { sessionId: String(result!.sessionId) };
-      if (authMode === "token" && userToken.trim()) body.userAccessToken = userToken.trim();
+      if (authMode === "token" && firstToken) body.userAccessToken = firstToken;
       if (authMode === "app" && appId.trim()) body.appId = appId.trim();
       if (authMode === "app" && appSecret.trim()) body.appSecret = appSecret.trim();
 
@@ -667,7 +821,7 @@ export default function Home() {
         sessionId: String(result.sessionId),
         format,
       };
-      if (authMode === "token" && userToken.trim()) body.userAccessToken = userToken.trim();
+      if (authMode === "token" && firstToken) body.userAccessToken = firstToken;
       if (authMode === "app" && appId.trim()) body.appId = appId.trim();
       if (authMode === "app" && appSecret.trim()) body.appSecret = appSecret.trim();
 
@@ -740,7 +894,7 @@ export default function Home() {
         sessionId: String(result.sessionId),
         targetSpaceId: targetSpaceId.trim(),
         targetAccessToken: targetAccessToken.trim(),
-        sourceAccessToken: userToken.trim(),
+        sourceAccessToken: firstToken,
       };
 
       const startRes = await fetch("/api/wiki/clone-to-lark/start", {
@@ -967,40 +1121,161 @@ export default function Home() {
               </div>
 
               {authMode === "app" ? (
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">App ID</Label>
-                    <Input placeholder="cli_xxxxxxxxxx" value={appId} onChange={e => setAppId(e.target.value)} className="h-8 text-xs font-mono" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">App Secret</Label>
-                    <div className="relative">
-                      <Input
-                        type={showSecret ? "text" : "password"}
-                        placeholder="App Secret"
-                        value={appSecret}
-                        onChange={e => setAppSecret(e.target.value)}
-                        className="h-8 text-xs font-mono pr-8"
-                      />
-                      <button className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowSecret(v => !v)} type="button">
-                        {showSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                      </button>
+                <div className="space-y-3">
+                  {/* Saved apps list */}
+                  {savedApps.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-medium text-muted-foreground">Saved Apps ({savedApps.length})</span>
+                        {savedApps.length > 1 && (
+                          <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                            <Zap className="w-3 h-3" />
+                            x{savedApps.length} speed
+                          </span>
+                        )}
+                      </div>
+                      <div className="space-y-1 max-h-[120px] overflow-y-auto">
+                        {savedApps.map((app, i) => (
+                          <div key={i} className="flex items-center gap-2 px-2 py-1 bg-muted/50 rounded text-xs group">
+                            <Database className="w-3 h-3 text-muted-foreground shrink-0" />
+                            <span className="font-medium truncate flex-1">{app.name}</span>
+                            <span className="text-muted-foreground font-mono truncate max-w-[120px]">{app.appId}</span>
+                            <button
+                              className="text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                              onClick={() => loadApp(app)}
+                              title="Load into inputs"
+                            >
+                              <Copy className="w-3 h-3" />
+                            </button>
+                            <button
+                              className="text-muted-foreground hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+                              onClick={() => removeApp(i)}
+                              title="Remove"
+                            >
+                              <AlertCircle className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                  <div className="col-span-2 flex items-center gap-2">
-                    <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!appId || !appSecret || testAuthMutation.isPending} onClick={() => testAuthMutation.mutate({ appId, appSecret })}>
-                      {testAuthMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
-                      Test Connection
-                    </Button>
-                    {testAuthMutation.isSuccess && <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Connected</span>}
-                    {testAuthMutation.isError && <span className="text-xs text-destructive flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> {testAuthMutation.error.message}</span>}
+                  )}
+
+                  {/* Input fields */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">App ID</Label>
+                      <Input placeholder="cli_xxxxxxxxxx" value={appId} onChange={e => setAppId(e.target.value)} className="h-8 text-xs font-mono" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">App Secret</Label>
+                      <div className="relative">
+                        <Input
+                          type={showSecret ? "text" : "password"}
+                          placeholder="App Secret"
+                          value={appSecret}
+                          onChange={e => setAppSecret(e.target.value)}
+                          className="h-8 text-xs font-mono pr-8"
+                        />
+                        <button className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" onClick={() => setShowSecret(v => !v)} type="button">
+                          {showSecret ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="col-span-2 flex items-center gap-2 flex-wrap">
+                      <Button variant="outline" size="sm" className="h-7 text-xs" disabled={!appId || !appSecret || testAuthMutation.isPending} onClick={() => testAuthMutation.mutate({ appId, appSecret })}>
+                        {testAuthMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                        Test
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        disabled={!appId || !appSecret}
+                        onClick={() => {
+                          if (!showAddApp) {
+                            setShowAddApp(true);
+                          } else {
+                            addApp();
+                          }
+                        }}
+                      >
+                        {showAddApp ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
+                        {showAddApp ? "Confirm Save" : "Save App"}
+                      </Button>
+                      {showAddApp && (
+                        <Input
+                          placeholder="App name (optional)"
+                          value={newAppName}
+                          onChange={e => setNewAppName(e.target.value)}
+                          onKeyDown={e => e.key === "Enter" && addApp()}
+                          className="h-7 text-xs w-36"
+                          autoFocus
+                        />
+                      )}
+                      {testAuthMutation.isSuccess && <span className="text-xs text-green-600 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Connected</span>}
+                      {testAuthMutation.isError && <span className="text-xs text-destructive flex items-center gap-1"><AlertCircle className="w-3.5 h-3.5" /> {testAuthMutation.error.message}</span>}
+                    </div>
                   </div>
                 </div>
               ) : (
                 <div className="space-y-1.5">
-                  <Label className="text-xs">User Access Token</Label>
-                  <Input placeholder="u-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" value={userToken} onChange={e => setUserToken(e.target.value)} className="h-8 text-xs font-mono" />
-                  <p className="text-xs text-amber-600 dark:text-amber-400">⚠ User tokens expire after 2 hours.</p>
+                  <Label className="text-xs">User Access Token(s)</Label>
+                  <textarea
+                    placeholder={"u-token1\nu-token2\nu-token3"}
+                    value={userToken}
+                    onChange={e => setUserToken(e.target.value)}
+                    className="w-full min-h-[60px] max-h-[120px] px-3 py-2 text-xs font-mono rounded-md border border-input bg-background resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+                    rows={2}
+                  />
+                  <p className="text-xs text-amber-600 dark:text-amber-400">⚠ Tokens expire after 2h. Paste multiple tokens (one per line) to speed up crawling.</p>
+                  {userToken.split(/[\n,]+/).filter(t => t.trim().length > 0).length > 1 && (
+                    <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                      <Zap className="w-3 h-3" />
+                      {userToken.split(/[\n,]+/).filter(t => t.trim().length > 0).length} tokens — crawl speed x{userToken.split(/[\n,]+/).filter(t => t.trim().length > 0).length}
+                    </p>
+                  )}
+
+                  {/* Batch Token from App Credentials */}
+                  <div className="border-t pt-2 mt-2">
+                    <button
+                      className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                      onClick={() => setShowBatchToken(v => !v)}
+                    >
+                      <Zap className="w-3 h-3" />
+                      Batch Token (from App credentials)
+                      {showBatchToken ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                    </button>
+                    {showBatchToken && (
+                      <div className="mt-2 space-y-1.5">
+                        <p className="text-xs text-muted-foreground">Paste app_id:app_secret (one per line):</p>
+                        <textarea
+                          placeholder={"cli_xxxx1:secret1\ncli_xxxx2:secret2\ncli_xxxx3:secret3"}
+                          value={batchAppList}
+                          onChange={e => setBatchAppList(e.target.value)}
+                          className="w-full min-h-[60px] max-h-[120px] px-3 py-2 text-xs font-mono rounded-md border border-input bg-background resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+                          rows={3}
+                        />
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-7 text-xs"
+                            disabled={batchLoading || !batchAppList.trim()}
+                            onClick={handleBatchToken}
+                          >
+                            {batchLoading ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Zap className="w-3 h-3 mr-1" />}
+                            Get All Tokens
+                          </Button>
+                          {batchResult && (
+                            <span className={cn("text-xs flex items-center gap-1", batchResult.success > 0 ? "text-green-600" : "text-destructive")}>
+                              <CheckCircle2 className="w-3 h-3" />
+                              {batchResult.success}/{batchResult.total} tokens acquired
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -1487,7 +1762,7 @@ export default function Home() {
                       searchQuery={searchQuery}
                       onSearchChange={setSearchQuery}
                       authInfo={{
-                        userAccessToken: authMode === "token" ? userToken.trim() || undefined : undefined,
+                        userAccessToken: authMode === "token" ? firstToken || undefined : undefined,
                         appId: authMode === "app" ? appId.trim() || undefined : undefined,
                         appSecret: authMode === "app" ? appSecret.trim() || undefined : undefined,
                       } as WikiTableAuthInfo}
